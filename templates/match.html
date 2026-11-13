@@ -1,0 +1,22 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Match {{.ID}}</title>
+  <script src="https://unpkg.com/htmx.org@2.0.4"></script>
+  <style>
+    body { margin: 0; background: #111; color: #eee; font-family: sans-serif; }
+    #hud { text-align: center; padding: 8px; }
+    canvas { display: block; margin: 0 auto; }
+  </style>
+</head>
+<body>
+  <div id="hud">
+    <span id="status">Connecting…</span>
+    <button hx-post="/matches/{{.ID}}/start" hx-swap="none">Start</button>
+  </div>
+  <canvas id="game" width="900" height="700"></canvas>
+  <script>window.MATCH = { id: {{.ID}}, name: {{.Name}} };</script>
+  <script src="/static/game.js"></script>
+</body>
+</html>

@@ -1,0 +1,8 @@
+{{range .}}
+<div>
+  <strong>{{.ID}}</strong> · {{.Players}} players · {{if .Started}}in progress{{else}}waiting{{end}}
+  {{if not .Started}}<button hx-post="/matches/{{.ID}}/join" hx-include="[name=name]">Join</button>{{end}}
+</div>
+{{else}}
+<p>No matches yet. Create one above.</p>
+{{end}}

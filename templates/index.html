@@ -1,0 +1,15 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Arena Royale</title>
+  <script src="https://unpkg.com/htmx.org@2.0.4"></script>
+</head>
+<body>
+  <h1>Arena Royale</h1>
+  <label>Name <input name="name" maxlength="16"></label>
+  <button hx-post="/matches" hx-include="[name=name]">Create match</button>
+  <h2>Matches</h2>
+  <div hx-get="/matches" hx-trigger="load, every 2s" hx-swap="innerHTML"></div>
+</body>
+</html>

@@ -7,7 +7,7 @@ carries state and inputs, htmx renders the lobby, and a canvas client draws the 
 
 - Lobby with create/join over htmx (match list refreshes every 2 seconds)
 - Server-authoritative simulation at 30 Hz
-- Shrinking zone that deals damage outside it
+- Shrinking zone that deals damage outside it; each shrink moves the safe center
 - Hitscan shooting with a cooldown
 - Loot (health pickups) that respawns
 - Interest management: each player only receives nearby players and loot
@@ -52,7 +52,6 @@ drive real clients through a match.
 
 ## Known limitations
 
-- Finished and abandoned matches are never removed from memory.
-- Matches start their tick loop when created, even if nobody joins.
+- Matches with no connected players for 60 seconds are closed and removed.
 - Gameplay is minimal: no walls, weapon variety, or vehicles.
 - The htmx script loads from a CDN.

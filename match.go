@@ -8,6 +8,9 @@ import (
 	"time"
 )
 
+// defaultIdleTimeout is how long a match may have no connected players before it closes.
+const defaultIdleTimeout = 60 * time.Second
+
 const (
 	tickRate     = 30
 	worldSize    = 2000.0
@@ -71,25 +74,33 @@ type Snapshot struct {
 }
 
 type Match struct {
-	mu       sync.Mutex
-	ID       string
-	players  map[int]*Player
-	loot     map[int]*Loot
-	nextID   int
-	started  bool
-	over     bool
-	winner   string
-	zoneR    float64
-	zoneLeft float64
+	mu        sync.Mutex
+	ID        string
+	players   map[int]*Player
+	loot      map[int]*Loot
+	nextID    int
+	started   bool
+	over      bool
+	winner    string
+	zoneX     float64
+	zoneY     float64
+	zoneR     float64
+	zoneLeft  float64
+	idleLimit time.Duration
+	idleAt    time.Time // when the match last had zero connected players; zero if it has some
+	closed    bool      // set when the match stops; the server removes closed matches
 }
 
 func NewMatch(id string) *Match {
 	m := &Match{
-		ID:       id,
-		players:  map[int]*Player{},
-		loot:     map[int]*Loot{},
-		zoneR:    worldSize * 0.75,
-		zoneLeft: shrinkEvery,
+		ID:        id,
+		players:   map[int]*Player{},
+		loot:      map[int]*Loot{},
+		idleLimit: defaultIdleTimeout,
+		zoneX:     center,
+		zoneY:     center,
+		zoneR:     worldSize * 0.75,
+		zoneLeft:  shrinkEvery,
 	}
 	for i := 0; i < 80; i++ {
 		m.addLoot()
@@ -120,8 +131,8 @@ func (m *Match) Join(name string) (*Player, bool) {
 	id := m.newID()
 	p := &Player{
 		ID: id, Name: name, HP: 100, Alive: true,
-		X:    clamp(center+r*math.Cos(a), playerRadius, worldSize-playerRadius),
-		Y:    clamp(center+r*math.Sin(a), playerRadius, worldSize-playerRadius),
+		X:    clamp(m.zoneX+r*math.Cos(a), playerRadius, worldSize-playerRadius),
+		Y:    clamp(m.zoneY+r*math.Sin(a), playerRadius, worldSize-playerRadius),
 		send: make(chan []byte, 16),
 	}
 	m.players[id] = p
@@ -187,14 +198,46 @@ func (m *Match) tick(dt float64) bool {
 	if m.started && !m.over {
 		m.step(dt)
 	}
+	m.trackIdle()
+	if m.closed {
+		return true
+	}
 	m.broadcast()
 	return m.over
+}
+
+// trackIdle closes the match once nobody has been connected for idleLimit.
+func (m *Match) trackIdle() {
+	connected := 0
+	for _, p := range m.players {
+		if !p.gone {
+			connected++
+		}
+	}
+	if connected > 0 {
+		m.idleAt = time.Time{}
+		return
+	}
+	if m.idleAt.IsZero() {
+		m.idleAt = time.Now()
+		return
+	}
+	if time.Since(m.idleAt) >= m.idleLimit {
+		m.closed = true
+	}
+}
+
+// Closed reports whether the match has stopped and can be removed.
+func (m *Match) Closed() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.closed
 }
 
 func (m *Match) step(dt float64) {
 	m.zoneLeft -= dt
 	if m.zoneLeft <= 0 {
-		m.zoneR = math.Max(m.zoneR*0.7, 60)
+		m.shrinkZone()
 		m.zoneLeft = shrinkEvery
 	}
 
@@ -212,7 +255,7 @@ func (m *Match) step(dt float64) {
 		}
 		p.wantShoot = false
 
-		if math.Hypot(p.X-center, p.Y-center) > m.zoneR {
+		if math.Hypot(p.X-m.zoneX, p.Y-m.zoneY) > m.zoneR {
 			p.HP -= zoneDPS * dt
 		}
 		m.tryPickup(p)
@@ -237,6 +280,18 @@ func (m *Match) step(dt float64) {
 			m.winner = last.Name
 		}
 	}
+}
+
+// shrinkZone moves to a smaller circle whose center lies inside the old one,
+// so the safe area drifts the way a battle-royale zone does.
+func (m *Match) shrinkZone() {
+	newR := math.Max(m.zoneR*0.7, 60)
+	slack := m.zoneR - newR
+	a := rand.Float64() * 2 * math.Pi
+	d := math.Sqrt(rand.Float64()) * slack
+	m.zoneX = clamp(m.zoneX+d*math.Cos(a), newR, worldSize-newR)
+	m.zoneY = clamp(m.zoneY+d*math.Sin(a), newR, worldSize-newR)
+	m.zoneR = newR
 }
 
 // fire is a hitscan ray from the shooter along its aim, hitting the nearest player in line.
@@ -296,7 +351,7 @@ func (m *Match) broadcast() {
 			alive++
 		}
 	}
-	z := Zone{X: center, Y: center, R: m.zoneR}
+	z := Zone{X: m.zoneX, Y: m.zoneY, R: m.zoneR}
 
 	for _, me := range m.players {
 		if me.gone {

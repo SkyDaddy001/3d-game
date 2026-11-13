@@ -163,3 +163,35 @@ func TestJoinRejectedAfterStart(t *testing.T) {
 		t.Fatalf("join after start: got status %d, want 409", resp.StatusCode)
 	}
 }
+
+func TestIdleMatchCloses(t *testing.T) {
+	s, err := newServer()
+	if err != nil {
+		t.Fatal(err)
+	}
+	mux, err := newMux(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	id := createMatch(t, srv.URL, "solo")
+	m := s.get(id)
+	if m == nil {
+		t.Fatal("match not found after create")
+	}
+	m.mu.Lock()
+	m.idleLimit = 200 * time.Millisecond
+	m.mu.Unlock()
+
+	// Nobody connects, so the match should close once the idle limit passes.
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if m.Closed() {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("empty match did not close after idle limit")
+}

@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"sort"
 	"sync"
+	"time"
 
 	"github.com/coder/websocket"
 )
@@ -47,6 +48,26 @@ func (s *Server) get(id string) *Match {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.matches[id]
+}
+
+// sweepClosed removes matches that have stopped, once a minute.
+func (s *Server) sweepClosed(ctx context.Context) {
+	t := time.NewTicker(time.Minute)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			s.mu.Lock()
+			for id, m := range s.matches {
+				if m.Closed() {
+					delete(s.matches, id)
+				}
+			}
+			s.mu.Unlock()
+		}
+	}
 }
 
 func (s *Server) render(w http.ResponseWriter, name string, data any) {
@@ -216,6 +237,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	go s.sweepClosed(context.Background())
 	log.Println("listening on :8080")
 	log.Fatal(http.ListenAndServe(":8080", mux))
 }

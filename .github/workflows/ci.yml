@@ -27,6 +27,9 @@ jobs:
     if: always()
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
       - name: Send status to Telegram
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
@@ -38,9 +41,18 @@ jobs:
             exit 0
           fi
           if [ "$RESULT" = "success" ]; then icon="✅"; else icon="❌"; fi
-          text="$icon CI $RESULT for ${GITHUB_REPOSITORY}
-          Branch: ${GITHUB_REF_NAME}
-          Commit: ${GITHUB_SHA::7}
+          subject=$(git log -1 --format=%s "$GITHUB_SHA")
+          author=$(git log -1 --format=%an "$GITHUB_SHA")
+          files=$(git diff --name-only HEAD~1 HEAD 2>/dev/null | wc -l | tr -d ' ')
+          text="$icon Arena Royale CI: $RESULT
+
+          Latest commit: ${subject}
+          Author: ${author} · ${files} file(s) changed
+          Branch: ${GITHUB_REF_NAME} · ${GITHUB_SHA::7}
+
+          Game: browser battle royale in Go. Htmx lobby, 30 Hz authoritative server over WebSocket, canvas client with a shrinking zone, loot, hitscan combat, and interest management.
+          Checks: gofmt, go vet, race-enabled tests, build.
+
           Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
           curl -fsS -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
             --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \

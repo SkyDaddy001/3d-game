@@ -30,6 +30,7 @@ type Server struct {
 	tmpl    *template.Template
 	store   *Store
 	mailer  Mailer
+	invites map[string][]invite // lowercase usertag -> pending invites
 }
 
 type inputMsg struct {
@@ -248,7 +249,7 @@ func newServer(storePath string, mailer Mailer) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Server{matches: map[string]*Match{}, tmpl: tmpl, store: store, mailer: mailer}, nil
+	return &Server{matches: map[string]*Match{}, tmpl: tmpl, store: store, mailer: mailer, invites: map[string][]invite{}}, nil
 }
 
 func newMux(s *Server) (http.Handler, error) {
@@ -262,6 +263,11 @@ func newMux(s *Server) (http.Handler, error) {
 	mux.HandleFunc("POST /auth/email", s.sendCode)
 	mux.HandleFunc("POST /auth/otp", s.verifyCode)
 	mux.HandleFunc("GET /friends", s.friendsList)
+	mux.HandleFunc("GET /invites", s.invitesList)
+	mux.HandleFunc("POST /invites", s.sendInvite)
+	mux.HandleFunc("POST /matches/quick", s.quickMatch)
+	mux.HandleFunc("GET /terms", s.terms)
+	mux.HandleFunc("GET /privacy", s.privacy)
 	mux.HandleFunc("POST /friends", s.addFriend)
 	mux.HandleFunc("GET /matches", s.listMatches)
 	mux.HandleFunc("POST /matches", s.createMatch)

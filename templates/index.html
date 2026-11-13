@@ -28,6 +28,7 @@
   </form>
   {{else}}
   <p>Playing as <strong>{{.Name}}</strong></p>
+  <button hx-post="/matches/quick" hx-swap="none">Random team</button>
   <button hx-post="/matches" hx-swap="none">Create match</button>
   <h2>Matches</h2>
   <div hx-get="/matches" hx-trigger="load, every 2s" hx-swap="innerHTML"></div>
@@ -37,6 +38,15 @@
     <label>Add friend by usertag <input name="usertag" minlength="3" maxlength="16" required></label>
     <button type="submit">Add</button>
   </form>
+  <h2>Invites</h2>
+  <div hx-get="/invites" hx-trigger="load, every 3s" hx-swap="innerHTML"></div>
+  <form hx-post="/invites" hx-target="#invite-status">
+    <label>Invite a friend to match <input name="matchid" pattern="[0-9]{6}" required></label>
+    <label>usertag <input name="usertag" minlength="3" maxlength="16" required></label>
+    <button type="submit">Invite</button>
+  </form>
+  <div id="invite-status"></div>
   {{end}}
+  <p><a href="/terms">Terms of Service</a> · <a href="/privacy">Privacy Policy</a> · &copy; 2026 Tarak B Patel</p>
 </body>
 </html>

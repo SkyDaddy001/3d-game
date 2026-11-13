@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 
 // World units match the server: x and y span 0..2000 on the ground plane.
 // Three.js uses Y as up, so server (x, y) maps to scene (x, height, z = y).
@@ -176,10 +177,10 @@ const matSkinB = new THREE.MeshStandardMaterial({ color: SKIN, roughness: 0.6 })
 const matPants = new THREE.MeshStandardMaterial({ color: PANTS, roughness: 0.7 });
 const matShirtEnemy = new THREE.MeshStandardMaterial({ color: SHIRT_ENEMY, roughness: 0.55 });
 const matShirtMate = new THREE.MeshStandardMaterial({ color: SHIRT_MATE, roughness: 0.55 });
-const headGeo = new THREE.BoxGeometry(10, 10, 10);
-const torsoGeo = new THREE.BoxGeometry(12, 14, 7);
-const armGeo = new THREE.BoxGeometry(4, 12, 4);
-const legGeo = new THREE.BoxGeometry(5, 12, 5);
+const headGeo = new RoundedBoxGeometry(10, 10, 10, 3, 2);
+const torsoGeo = new RoundedBoxGeometry(12, 14, 7, 3, 2);
+const armGeo = new RoundedBoxGeometry(4, 12, 4, 2, 1.2);
+const legGeo = new RoundedBoxGeometry(5, 12, 5, 2, 1.2);
 
 function makeFaceTexture() {
   const c = document.createElement('canvas');

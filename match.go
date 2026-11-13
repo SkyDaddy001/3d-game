@@ -29,6 +29,8 @@ const (
 	maxPlayers   = 100
 	shrinkEvery  = 30.0
 	obstacleN    = 40
+	treeN        = 70
+	treeSize     = 10.0 // side of a tree trunk's collision square
 	maxEvents    = 5
 	headRadius   = 5.0 // a shot this close to the center counts as a headshot
 	headDamage   = 100.0
@@ -104,6 +106,8 @@ type Player struct {
 	reviveProg float64 // seconds of revive progress from a nearby teammate
 	hurtCool   float64 // seconds since last damage; health recovers when it reaches zero
 	wantRevive bool
+	kills      int     // eliminations credited to this player
+	damage     float64 // total damage dealt to enemies
 	send       chan []byte
 }
 
@@ -143,6 +147,7 @@ type Rect struct {
 	Y float64 `json:"y"`
 	W float64 `json:"w"`
 	H float64 `json:"h"`
+	K string  `json:"k,omitempty"` // kind: empty for a building, "tree" for a tree trunk
 }
 
 type AmmoView struct {
@@ -168,6 +173,8 @@ type PlayerView struct {
 	Place  int     `json:"place"`
 	Bloom  float64 `json:"bloom"`
 	Downed bool    `json:"downed"`
+	Aim    float64 `json:"aim"`
+	Kills  int     `json:"kills"`
 	Bleed  float64 `json:"bleed"`
 }
 
@@ -194,6 +201,7 @@ type Snapshot struct {
 	HitSeq    int          `json:"hitSeq"`
 	HitKind   string       `json:"hitKind"`
 	Ammo      AmmoView     `json:"ammo"`
+	XP        int          `json:"xp"` // experience earned this match; set once the match is over
 }
 
 type Match struct {
@@ -215,6 +223,17 @@ type Match struct {
 	idleLimit time.Duration
 	idleAt    time.Time // when the match last had zero connected players; zero if it has some
 	closed    bool      // set when the match stops; the server removes closed matches
+	// OnEnd, if set, is called once with every player's result when the match is decided.
+	OnEnd func([]PlayerResult)
+}
+
+// PlayerResult is one player's outcome, reported when the match ends.
+type PlayerResult struct {
+	Name   string
+	Kills  int
+	Place  int
+	Damage int
+	Won    bool
 }
 
 func NewMatch(id string) *Match {
@@ -235,6 +254,13 @@ func NewMatch(id string) *Match {
 			W: 40 + rand.Float64()*100,
 			H: 40 + rand.Float64()*100,
 		})
+	}
+	// Trees are small solid obstacles. One that would stand inside a building is skipped.
+	for i := 0; i < treeN; i++ {
+		t := Rect{X: rand.Float64() * (worldSize - treeSize), Y: rand.Float64() * (worldSize - treeSize), W: treeSize, H: treeSize, K: "tree"}
+		if !m.blocked(t.X+treeSize/2, t.Y+treeSize/2) {
+			m.obstacles = append(m.obstacles, t)
+		}
 	}
 	for i := 0; i < 80; i++ {
 		m.addLoot()
@@ -296,6 +322,7 @@ func (m *Match) eliminate(p *Player, by string, killer *Player, headshot bool) {
 	m.logEvent(fmt.Sprintf("%s eliminated by %s%s (#%d)", p.Name, by, how, p.Place))
 	if killer != nil {
 		killer.revealLeft = bountyTime
+		killer.kills++
 	}
 }
 
@@ -563,6 +590,15 @@ func (m *Match) checkWinner() {
 	if m.winner != "nobody" {
 		m.logEvent(fmt.Sprintf("%s wins the match", m.winner))
 	}
+	if m.OnEnd != nil {
+		results := make([]PlayerResult, 0, len(m.players))
+		for _, p := range m.players {
+			results = append(results, PlayerResult{
+				Name: p.Name, Kills: p.kills, Place: p.Place, Damage: int(p.damage), Won: p.Place == 1,
+			})
+		}
+		go m.OnEnd(results)
+	}
 }
 
 func (m *Match) teamMembers(team int) []*Player {
@@ -739,6 +775,7 @@ func (m *Match) shootRay(p *Player, angle, reach, dmg, headDmg float64) (bool, b
 	if targetHead {
 		d = headDmg
 	}
+	p.damage += math.Min(d, math.Max(target.HP, 0))
 	target.HP -= d
 	target.hurtCool = regenDelay
 	if target.HP <= 0 {
@@ -817,7 +854,7 @@ func (p *Player) view() PlayerView {
 		Weapon: weapons[p.weapon].Name,
 		ID:     p.ID, Name: p.Name, Team: p.Team, X: p.X, Y: p.Y,
 		HP: p.HP, Alive: p.Alive, Place: p.Place, Bloom: p.bloom,
-		Downed: p.downed, Bleed: p.bleed,
+		Downed: p.downed, Bleed: p.bleed, Aim: p.Aim, Kills: p.kills,
 	}
 }
 
@@ -841,6 +878,9 @@ func (m *Match) broadcast() {
 			Players: []PlayerView{}, Loot: []Loot{}, Obstacles: []Rect{},
 			Events: append([]string{}, m.events...), Revealed: []PlayerView{},
 			Pings: []Ping{}, HitSeq: me.hitSeq, HitKind: me.hitKind, Ammo: me.ammoView(),
+		}
+		if m.over {
+			snap.XP = ComputeXP(me.kills, me.Place, int(me.damage))
 		}
 		for _, q := range m.players {
 			if q == me || !q.Alive {

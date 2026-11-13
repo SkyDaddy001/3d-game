@@ -9,19 +9,25 @@
     { "imports": { "three": "/static/vendor/three.module.js", "three/addons/": "/static/vendor/addons/" } }
   </script>
   <style>
-    html, body { margin: 0; height: 100%; overflow: hidden; background: #000; color: #eee; font-family: sans-serif; }
-    #scene-root, #overlay { position: fixed; inset: 0; width: 100vw; height: 100vh; }
+    html, body { margin: 0; height: 100%; overflow: hidden; background: #0d1220; color: #fff; font-family: ui-rounded, system-ui, sans-serif; }
+    #scene-root, #overlay, #vignette { position: fixed; inset: 0; width: 100vw; height: 100vh; }
+    #vignette { pointer-events: none; background: radial-gradient(ellipse at center, rgba(0,0,0,0) 55%, rgba(10,14,30,0.38) 100%); }
     #overlay { pointer-events: auto; }
-    #hud { position: fixed; top: 8px; left: 50%; transform: translateX(-50%); z-index: 10; text-align: center; }
-    #hud button { pointer-events: auto; }
+    #hud { position: fixed; top: 10px; left: 50%; transform: translateX(-50%); z-index: 10; display: flex; gap: 10px; align-items: center;
+           background: rgba(15,20,35,0.6); padding: 8px 16px; border-radius: 999px; font-weight: 700; text-shadow: 0 1px 2px rgba(0,0,0,0.5); }
+    #hud button, #hud a { pointer-events: auto; border: 0; border-radius: 999px; padding: 6px 16px; font: inherit; color: #1b2030;
+           background: #ffd54f; text-decoration: none; cursor: pointer; }
+    [hidden] { display: none !important; }
   </style>
 </head>
 <body>
   <div id="scene-root"></div>
+  <div id="vignette"></div>
   <canvas id="overlay"></canvas>
   <div id="hud">
     <span id="status">Connecting…</span>
-    <button hx-post="/matches/{{.ID}}/start" hx-swap="none">Start</button>
+    <button id="start" hx-post="/matches/{{.ID}}/start" hx-swap="none">Start</button>
+    <a id="back" href="/" hidden>Back to lobby</a>
   </div>
   <script>window.MATCH = { id: {{.ID}}, name: {{.Name}} };</script>
   <script type="module" src="/static/game3d.js"></script>

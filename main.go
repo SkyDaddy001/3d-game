@@ -87,11 +87,19 @@ func (s *Server) render(w http.ResponseWriter, name string, data any) {
 
 func (s *Server) index(w http.ResponseWriter, r *http.Request) {
 	acc := sessionFrom(r).acc
+	level, into, need := LevelProgress(acc.XP)
 	s.render(w, "index.html", struct {
 		Name     string
 		Verified bool
 		Friends  []string
-	}{acc.Name, acc.Verified, acc.Friends})
+		Level    int
+		XPInto   int
+		XPNeed   int
+		Percent  int
+		Matches  int
+		Wins     int
+		Kills    int
+	}{acc.Name, acc.Verified, acc.Friends, level, into, need, into * 100 / need, acc.Matches, acc.Wins, acc.Kills})
 }
 
 func (s *Server) listMatches(w http.ResponseWriter, r *http.Request) {
@@ -126,7 +134,7 @@ func (s *Server) createMatch(w http.ResponseWriter, r *http.Request) {
 	}
 	id := fmt.Sprintf("%06d", rand.Intn(1_000_000))
 	s.mu.Lock()
-	s.matches[id] = NewMatch(id)
+	s.matches[id] = s.newMatch(id)
 	s.mu.Unlock()
 	redirectTo(w, id)
 }
@@ -233,6 +241,24 @@ func (s *Server) serveWS(w http.ResponseWriter, r *http.Request) {
 			Revive: in.Revive,
 		})
 	}
+}
+
+// newMatch creates a match whose results are saved to each player's profile when it ends.
+func (s *Server) newMatch(id string) *Match {
+	m := NewMatch(id)
+	m.mu.Lock()
+	m.OnEnd = func(results []PlayerResult) {
+		for _, r := range results {
+			err := s.store.RecordMatch(r.Name, MatchResult{
+				XP: ComputeXP(r.Kills, r.Place, r.Damage), Kills: r.Kills, Won: r.Won,
+			})
+			if err != nil {
+				log.Println("record match:", r.Name, err)
+			}
+		}
+	}
+	m.mu.Unlock()
+	return m
 }
 
 // redirectTo tells htmx to navigate the full page to the match.

@@ -41,7 +41,7 @@ func (s *Server) quickMatch(w http.ResponseWriter, r *http.Request) {
 		id = pick.ID
 	} else {
 		id = fmt.Sprintf("%06d", rand.Intn(1_000_000))
-		s.matches[id] = NewMatch(id)
+		s.matches[id] = s.newMatch(id)
 	}
 	s.mu.Unlock()
 	redirectTo(w, id)
@@ -89,12 +89,12 @@ func (s *Server) invitesList(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if len(live) == 0 {
-		fmt.Fprint(w, "<p>No invites right now.</p>")
+		fmt.Fprint(w, `<p class="empty">No invites right now.</p>`)
 		return
 	}
 	var b strings.Builder
 	for _, inv := range live {
-		fmt.Fprintf(&b, `<div>%s invited you to match %s `+
+		fmt.Fprintf(&b, `<div class="row-item"><span>%s invited you to match %s</span> `+
 			`<button hx-post="/matches/%s/join" hx-swap="none">Join</button></div>`,
 			html.EscapeString(inv.From), html.EscapeString(inv.MatchID), html.EscapeString(inv.MatchID))
 	}

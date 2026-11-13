@@ -73,7 +73,7 @@ drive real clients through a match.
 
 - Matches with no connected players for 60 seconds are closed and removed.
 - Gameplay is minimal: one weapon, no vehicles, and obstacles are randomly placed rectangles.
-- The 3D client has not been checked in a real browser yet; it passes a syntax check only.
+- The 3D client is checked in headless Chrome with software rendering only. Frame rate on real phones and laptops is unmeasured.
 - Textures and models are generated in code. No photoreal art assets are included.
 
 ## Accounts, sign-in, and friends
@@ -111,4 +111,21 @@ Production notes: serve over HTTPS and add `Secure` to the cookie, and do not us
 - A downed player who is not revived within 20 seconds bleeds out. A second lethal hit while downed
   eliminates them, and so does the zone at any time.
 - Medkit loot still restores 30 HP. Touch players hold the REVIVE button (bottom right) to revive.
+
+## Look and feel
+
+- Stylized animated look: warm sun with a cool sky fill, soft shadows, a gradient sky dome with
+  drifting clouds, a gentle bloom, and painterly grass with flowers and bushes.
+- Buildings are pastel blocks with glass windows and colored roofs. Trees are solid: they block
+  movement and shots.
+- Characters have a big head, blinking eyes, hair and skin tones picked from the usertag, a run
+  cycle, breathing, and a lying-down pose when downed. They face where the player aims.
+- First-person hands and weapons bob with each step, kick on recoil, and dip on reload and switch.
+- The HUD is drawn at device resolution, with a health bar and an ammo panel.
+- Phones (coarse pointers) skip the bloom pass and use smaller shadows.
+
+## Levels
+
+When a match ends, each player's kills, placement, and damage are turned into XP and saved to
+their profile. The lobby shows level, XP progress, matches, wins, and kills. Levels are cosmetic.
 

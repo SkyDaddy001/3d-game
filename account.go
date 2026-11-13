@@ -134,11 +134,11 @@ func (s *Server) addFriend(w http.ResponseWriter, r *http.Request) {
 func (s *Server) friendsList(w http.ResponseWriter, r *http.Request) {
 	friends := sessionFrom(r).acc.Friends
 	if len(friends) == 0 {
-		fmt.Fprint(w, "<p>No friends yet. Add one by usertag.</p>")
+		fmt.Fprint(w, `<p class="empty">No friends yet. Add one by usertag.</p>`)
 		return
 	}
 	var b strings.Builder
-	b.WriteString("<ul>")
+	b.WriteString(`<ul class="friends">`)
 	for _, f := range friends {
 		b.WriteString("<li>" + html.EscapeString(f) + "</li>")
 	}

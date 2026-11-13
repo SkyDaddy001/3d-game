@@ -1,52 +1,100 @@
 <!doctype html>
-<html>
+<html lang="en">
 <head>
   <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Arena Royale</title>
+  <link rel="stylesheet" href="/static/lobby.css">
   <script src="/static/vendor/htmx.min.js"></script>
 </head>
 <body>
-  <h1>Arena Royale</h1>
+<main>
+  <header class="brand">
+    <h1>Arena Royale</h1>
+    <p>Drop in. Team up. Be the last one standing.</p>
+  </header>
+
   {{if not .Name}}
-  <form hx-post="/profile/name" hx-swap="none">
-    <label>Choose your usertag
-      <input name="name" minlength="3" maxlength="16" pattern="[A-Za-z0-9_]{3,16}" required>
-    </label>
-    <button type="submit">Continue</button>
-  </form>
-  <p>3 to 16 letters, digits or underscores. Friends find you by this usertag.</p>
+  <section class="card">
+    <h2>Choose your usertag</h2>
+    <form class="row" hx-post="/profile/name" hx-swap="none">
+      <input name="name" minlength="3" maxlength="16" pattern="[A-Za-z0-9_]{3,16}" placeholder="Your usertag" aria-label="Usertag" required>
+      <button type="submit">Continue</button>
+    </form>
+    <p class="small">3 to 16 letters, digits or underscores. Friends find you by this usertag, and it can't be changed later.</p>
+    <div class="status err" id="form-status"></div>
+  </section>
+
   {{else if not .Verified}}
-  <p>Usertag <strong>{{.Name}}</strong>. Verify your email to play.</p>
-  <form hx-post="/auth/email" hx-target="#email-status">
-    <label>Email <input name="email" type="email" required></label>
-    <button type="submit">Send code</button>
-  </form>
-  <div id="email-status"></div>
-  <form hx-post="/auth/otp" hx-swap="none">
-    <label>6-digit code <input name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" required></label>
-    <button type="submit">Verify</button>
-  </form>
+  <section class="card">
+    <h2>Hi {{.Name}}, verify your email to play</h2>
+    <form class="row" hx-post="/auth/email" hx-target="#form-status">
+      <input name="email" type="email" placeholder="you@example.com" aria-label="Email" required>
+      <button type="submit" class="ghost">Send code</button>
+    </form>
+    <form class="row" hx-post="/auth/otp" hx-swap="none">
+      <input name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" placeholder="6-digit code" aria-label="Code" required>
+      <button type="submit">Verify</button>
+    </form>
+    <div class="status" id="form-status"></div>
+  </section>
+
   {{else}}
-  <p>Playing as <strong>{{.Name}}</strong></p>
-  <button hx-post="/matches/quick" hx-swap="none">Random team</button>
-  <button hx-post="/matches" hx-swap="none">Create match</button>
-  <h2>Matches</h2>
-  <div hx-get="/matches" hx-trigger="load, every 2s" hx-swap="innerHTML"></div>
-  <h2>Friends</h2>
-  <div hx-get="/friends" hx-trigger="load" hx-swap="innerHTML"></div>
-  <form hx-post="/friends" hx-swap="none">
-    <label>Add friend by usertag <input name="usertag" minlength="3" maxlength="16" required></label>
-    <button type="submit">Add</button>
-  </form>
-  <h2>Invites</h2>
-  <div hx-get="/invites" hx-trigger="load, every 3s" hx-swap="innerHTML"></div>
-  <form hx-post="/invites" hx-target="#invite-status">
-    <label>Invite a friend to match <input name="matchid" pattern="[0-9]{6}" required></label>
-    <label>usertag <input name="usertag" minlength="3" maxlength="16" required></label>
-    <button type="submit">Invite</button>
-  </form>
-  <div id="invite-status"></div>
+  <section class="card">
+    <div class="profile">
+      <div class="avatar">{{slice .Name 0 1}}</div>
+      <div class="who">
+        <div><span class="tag">{{.Name}}</span><span class="level">Level {{.Level}}</span></div>
+        <div class="xp"><i style="width: {{.Percent}}%"></i></div>
+        <div class="small">{{.XPInto}} / {{.XPNeed}} XP to the next level</div>
+      </div>
+      <div class="stats">
+        <div><b>{{.Matches}}</b>Matches</div>
+        <div><b>{{.Wins}}</b>Wins</div>
+        <div><b>{{.Kills}}</b>Kills</div>
+      </div>
+    </div>
+    <div class="actions">
+      <button class="go" hx-post="/matches/quick" hx-swap="none">▶ Play · random team</button>
+      <button class="ghost" hx-post="/matches" hx-swap="none">Create private match</button>
+    </div>
+    <div class="status err" id="form-status"></div>
+  </section>
+
+  <div class="grid">
+    <section class="card">
+      <h2>Open matches</h2>
+      <div hx-get="/matches" hx-trigger="load, every 2s" hx-swap="innerHTML"></div>
+    </section>
+    <section class="card">
+      <h2>Invites</h2>
+      <div hx-get="/invites" hx-trigger="load, every 3s" hx-swap="innerHTML"></div>
+      <form class="row" hx-post="/invites" hx-target="#invite-status">
+        <input name="matchid" pattern="[0-9]{6}" placeholder="Match number" aria-label="Match number" required>
+        <input name="usertag" minlength="3" maxlength="16" placeholder="Friend's usertag" aria-label="Friend's usertag" required>
+        <button type="submit">Invite</button>
+      </form>
+      <div class="status" id="invite-status"></div>
+    </section>
+    <section class="card">
+      <h2>Friends</h2>
+      <div hx-get="/friends" hx-trigger="load" hx-swap="innerHTML"></div>
+      <form class="row" hx-post="/friends" hx-swap="none">
+        <input name="usertag" minlength="3" maxlength="16" placeholder="Add by usertag" aria-label="Add friend by usertag" required>
+        <button type="submit">Add</button>
+      </form>
+    </section>
+  </div>
   {{end}}
-  <p><a href="/terms">Terms of Service</a> · <a href="/privacy">Privacy Policy</a> · &copy; 2026 Tarak B Patel</p>
+
+  <footer><a href="/terms">Terms of Service</a> · <a href="/privacy">Privacy Policy</a> · &copy; 2026 Tarak B Patel</footer>
+</main>
+<script>
+  // Show the server's reason when a form is refused (name taken, wrong code, and so on).
+  document.body.addEventListener('htmx:responseError', function (e) {
+    var el = document.getElementById('form-status');
+    if (el) { el.classList.add('err'); el.textContent = e.detail.xhr.responseText; }
+  });
+</script>
 </body>
 </html>

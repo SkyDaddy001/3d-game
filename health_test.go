@@ -94,3 +94,36 @@ func TestDamageResetsRegeneration(t *testing.T) {
 		t.Fatalf("a hit should start the regen delay, got %v", target.hurtCool)
 	}
 }
+
+// When the match is decided, every player's result is reported once, with kills and the win.
+func TestMatchEndReportsResults(t *testing.T) {
+	m := newArena()
+	m.started = true
+	got := make(chan []PlayerResult, 1)
+	m.OnEnd = func(r []PlayerResult) { got <- r }
+	shooter := &Player{ID: 1, Name: "a", Team: 1, X: 0, Y: 50, Alive: true, HP: 100, Aim: 0}
+	target := &Player{ID: 2, Name: "b", Team: 2, X: 100, Y: 50, Alive: true, HP: 100}
+	m.players[1], m.players[2] = shooter, target
+
+	m.fire(shooter) // headshot downs
+	m.fire(shooter) // second hit eliminates
+	m.checkWinner()
+	m.checkWinner() // a second call must not report again
+
+	results := <-got
+	byName := map[string]PlayerResult{}
+	for _, r := range results {
+		byName[r.Name] = r
+	}
+	if w := byName["a"]; !w.Won || w.Kills != 1 || w.Place != 1 || w.Damage != 100 {
+		t.Fatalf("winner result: %+v", w)
+	}
+	if l := byName["b"]; l.Won || l.Place != 2 {
+		t.Fatalf("loser result: %+v", l)
+	}
+	select {
+	case <-got:
+		t.Fatal("results reported twice")
+	default:
+	}
+}

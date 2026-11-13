@@ -1,8 +1,8 @@
 {{range .}}
-<div>
-  <strong>{{.ID}}</strong> · {{.Players}} players · {{if .Started}}in progress{{else}}waiting{{end}}
-  {{if not .Started}}<button hx-post="/matches/{{.ID}}/join" hx-swap="none">Join</button>{{end}}
+<div class="row-item">
+  <span>Match {{.ID}} <span class="small">· {{.Players}} players</span></span>
+  {{if .Started}}<span class="pill live">In progress</span>{{else}}<span><span class="pill open">Open</span> <button hx-post="/matches/{{.ID}}/join" hx-swap="none">Join</button></span>{{end}}
 </div>
 {{else}}
-<p>No matches yet. Create one above.</p>
+<p class="empty">No matches yet. Press Play to start one.</p>
 {{end}}

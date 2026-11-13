@@ -10,7 +10,7 @@ import (
 	"log"
 	"math/rand"
 	"net/http"
-	"net/url"
+	"os"
 	"sort"
 	"sync"
 	"time"
@@ -28,6 +28,8 @@ type Server struct {
 	mu      sync.Mutex
 	matches map[string]*Match
 	tmpl    *template.Template
+	store   *Store
+	mailer  Mailer
 }
 
 type inputMsg struct {
@@ -82,7 +84,12 @@ func (s *Server) render(w http.ResponseWriter, name string, data any) {
 }
 
 func (s *Server) index(w http.ResponseWriter, r *http.Request) {
-	s.render(w, "index.html", nil)
+	acc := sessionFrom(r).acc
+	s.render(w, "index.html", struct {
+		Name     string
+		Verified bool
+		Friends  []string
+	}{acc.Name, acc.Verified, acc.Friends})
 }
 
 func (s *Server) listMatches(w http.ResponseWriter, r *http.Request) {
@@ -102,22 +109,37 @@ func (s *Server) listMatches(w http.ResponseWriter, r *http.Request) {
 	s.render(w, "matches.html", rows)
 }
 
+// requirePlayer stops players who have not chosen a usertag and verified their email.
+func requirePlayer(w http.ResponseWriter, r *http.Request) bool {
+	if !ready(r) {
+		http.Error(w, "choose a usertag and verify your email first", http.StatusForbidden)
+		return false
+	}
+	return true
+}
+
 func (s *Server) createMatch(w http.ResponseWriter, r *http.Request) {
+	if !requirePlayer(w, r) {
+		return
+	}
 	id := fmt.Sprintf("%06d", rand.Intn(1_000_000))
 	s.mu.Lock()
 	s.matches[id] = NewMatch(id)
 	s.mu.Unlock()
-	redirectTo(w, id, r.FormValue("name"))
+	redirectTo(w, id)
 }
 
 func (s *Server) joinMatch(w http.ResponseWriter, r *http.Request) {
+	if !requirePlayer(w, r) {
+		return
+	}
 	id := r.PathValue("id")
 	m := s.get(id)
 	if m == nil || m.Started() {
 		http.Error(w, "match unavailable", http.StatusConflict)
 		return
 	}
-	redirectTo(w, id, r.FormValue("name"))
+	redirectTo(w, id)
 }
 
 func (s *Server) startMatch(w http.ResponseWriter, r *http.Request) {
@@ -135,20 +157,28 @@ func (s *Server) startMatch(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) matchPage(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+	if !ready(r) {
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+		return
+	}
+	name := sessionFrom(r).acc.Name
 	if s.get(id) == nil {
 		http.NotFound(w, r)
 		return
 	}
-	s.render(w, "match.html", struct{ ID, Name string }{id, nameOr(r.URL.Query().Get("name"))})
+	s.render(w, "match.html", struct{ ID, Name string }{id, name})
 }
 
 func (s *Server) serveWS(w http.ResponseWriter, r *http.Request) {
+	if !requirePlayer(w, r) {
+		return
+	}
 	m := s.get(r.PathValue("id"))
 	if m == nil {
 		http.NotFound(w, r)
 		return
 	}
-	p, ok := m.Join(nameOr(r.URL.Query().Get("name")))
+	p, ok := m.Join(sessionFrom(r).acc.Name)
 	if !ok {
 		http.Error(w, "match full or already started", http.StatusConflict)
 		return
@@ -202,37 +232,37 @@ func (s *Server) serveWS(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// redirectTo tells htmx to navigate the full page to the match, carrying the player's name.
-func redirectTo(w http.ResponseWriter, id, name string) {
-	w.Header().Set("HX-Redirect", "/matches/"+id+"?"+url.Values{"name": {nameOr(name)}}.Encode())
+// redirectTo tells htmx to navigate the full page to the match.
+func redirectTo(w http.ResponseWriter, id string) {
+	w.Header().Set("HX-Redirect", "/matches/"+id)
 	w.WriteHeader(http.StatusOK)
 }
 
-func nameOr(s string) string {
-	if s == "" {
-		return "anon"
-	}
-	if len(s) > 16 {
-		return s[:16]
-	}
-	return s
-}
-
-func newServer() (*Server, error) {
+// newServer opens the account store at storePath. An empty path keeps accounts in memory.
+func newServer(storePath string, mailer Mailer) (*Server, error) {
 	tmpl, err := template.ParseFS(templateFS, "templates/*.html")
 	if err != nil {
 		return nil, err
 	}
-	return &Server{matches: map[string]*Match{}, tmpl: tmpl}, nil
+	store, err := OpenStore(storePath)
+	if err != nil {
+		return nil, err
+	}
+	return &Server{matches: map[string]*Match{}, tmpl: tmpl, store: store, mailer: mailer}, nil
 }
 
-func newMux(s *Server) (*http.ServeMux, error) {
+func newMux(s *Server) (http.Handler, error) {
 	sub, err := fs.Sub(staticFS, "static")
 	if err != nil {
 		return nil, err
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", s.index)
+	mux.HandleFunc("POST /profile/name", s.setName)
+	mux.HandleFunc("POST /auth/email", s.sendCode)
+	mux.HandleFunc("POST /auth/otp", s.verifyCode)
+	mux.HandleFunc("GET /friends", s.friendsList)
+	mux.HandleFunc("POST /friends", s.addFriend)
 	mux.HandleFunc("GET /matches", s.listMatches)
 	mux.HandleFunc("POST /matches", s.createMatch)
 	mux.HandleFunc("GET /matches/{id}", s.matchPage)
@@ -240,11 +270,15 @@ func newMux(s *Server) (*http.ServeMux, error) {
 	mux.HandleFunc("POST /matches/{id}/start", s.startMatch)
 	mux.HandleFunc("GET /ws/{id}", s.serveWS)
 	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.FS(sub))))
-	return mux, nil
+	return s.withAccount(mux), nil
 }
 
 func main() {
-	s, err := newServer()
+	dataPath := os.Getenv("ARENA_DATA")
+	if dataPath == "" {
+		dataPath = "arena-data.json"
+	}
+	s, err := newServer(dataPath, mailerFromEnv())
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -253,6 +287,6 @@ func main() {
 		log.Fatal(err)
 	}
 	go s.sweepClosed(context.Background())
-	log.Println("listening on :8080")
+	log.Println("listening on :8080, accounts in", dataPath)
 	log.Fatal(http.ListenAndServe(":8080", mux))
 }

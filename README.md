@@ -75,3 +75,29 @@ drive real clients through a match.
 - Gameplay is minimal: one weapon, no vehicles, and obstacles are randomly placed rectangles.
 - The 3D client has not been checked in a real browser yet; it passes a syntax check only.
 - Textures and models are generated in code. No photoreal art assets are included.
+
+## Accounts, sign-in, and friends
+
+- Each browser gets a device account on its first visit. The secret cookie is the login,
+  so returning to the same browser restores the same profile. Only a hash of the cookie is saved.
+- A player picks a **usertag** (3–16 letters, digits, or underscores). It is unique, ignoring case,
+  and it is how friends find each other.
+- Playing needs a **verified email**. A six-digit code is emailed; it expires after 10 minutes,
+  locks after five wrong tries, and can be requested again after 30 seconds. The address is kept
+  only as a hash, so one mailbox can link to only one account.
+- **Friends** are added by usertag and are mutual.
+- Accounts are saved to `arena-data.json` (set `ARENA_DATA` to change the path). Writes are atomic.
+
+Email is configured through environment variables:
+
+| Variable | Purpose |
+| --- | --- |
+| `ARENA_SMTP_HOST`, `ARENA_SMTP_PORT` (default 587) | SMTP server for sending codes |
+| `ARENA_SMTP_USER`, `ARENA_SMTP_PASS` | SMTP login |
+| `ARENA_SMTP_FROM` | Sender address |
+| `ARENA_DEV_MAIL=1` | Development only: print codes to the server log instead of sending |
+
+With no email settings, sign-in codes are not sent and verification is unavailable.
+
+Production notes: serve over HTTPS and add `Secure` to the cookie, and do not use
+`ARENA_DEV_MAIL` on a public server, because the log then holds live codes.

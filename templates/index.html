@@ -7,9 +7,36 @@
 </head>
 <body>
   <h1>Arena Royale</h1>
-  <label>Name <input name="name" maxlength="16"></label>
-  <button hx-post="/matches" hx-include="[name=name]">Create match</button>
+  {{if not .Name}}
+  <form hx-post="/profile/name" hx-swap="none">
+    <label>Choose your usertag
+      <input name="name" minlength="3" maxlength="16" pattern="[A-Za-z0-9_]{3,16}" required>
+    </label>
+    <button type="submit">Continue</button>
+  </form>
+  <p>3 to 16 letters, digits or underscores. Friends find you by this usertag.</p>
+  {{else if not .Verified}}
+  <p>Usertag <strong>{{.Name}}</strong>. Verify your email to play.</p>
+  <form hx-post="/auth/email" hx-target="#email-status">
+    <label>Email <input name="email" type="email" required></label>
+    <button type="submit">Send code</button>
+  </form>
+  <div id="email-status"></div>
+  <form hx-post="/auth/otp" hx-swap="none">
+    <label>6-digit code <input name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" required></label>
+    <button type="submit">Verify</button>
+  </form>
+  {{else}}
+  <p>Playing as <strong>{{.Name}}</strong></p>
+  <button hx-post="/matches" hx-swap="none">Create match</button>
   <h2>Matches</h2>
   <div hx-get="/matches" hx-trigger="load, every 2s" hx-swap="innerHTML"></div>
+  <h2>Friends</h2>
+  <div hx-get="/friends" hx-trigger="load" hx-swap="innerHTML"></div>
+  <form hx-post="/friends" hx-swap="none">
+    <label>Add friend by usertag <input name="usertag" minlength="3" maxlength="16" required></label>
+    <button type="submit">Add</button>
+  </form>
+  {{end}}
 </body>
 </html>

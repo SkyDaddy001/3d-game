@@ -8,16 +8,46 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"regexp"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/coder/websocket"
 )
 
+// captureMailer keeps the last email instead of sending it, so tests can read the code.
+type captureMailer struct {
+	mu   sync.Mutex
+	body string
+}
+
+func (c *captureMailer) Send(to, subject, body string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.body = body
+	return nil
+}
+
+var codeRE = regexp.MustCompile(`code is (\d{6})`)
+
+func (c *captureMailer) code(t *testing.T) string {
+	t.Helper()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	m := codeRE.FindStringSubmatch(c.body)
+	if m == nil {
+		t.Fatalf("no code in last email: %q", c.body)
+	}
+	return m[1]
+}
+
+var testMail = &captureMailer{}
+
 func newTestServer(t *testing.T) (*httptest.Server, *Server) {
 	t.Helper()
-	s, err := newServer()
+	s, err := newServer(t.TempDir()+"/accounts.json", testMail)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -28,6 +58,38 @@ func newTestServer(t *testing.T) (*httptest.Server, *Server) {
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	return srv, s
+}
+
+// newPlayer makes a browser-like client: it gets a device cookie, picks a usertag, and verifies
+// its email with the code from the capture mailer. Each call is a separate device.
+func newPlayer(t *testing.T, base, name string) *http.Client {
+	t.Helper()
+	c := newPlayerNoName(t, base)
+	resp, err := c.PostForm(base+"/profile/name", url.Values{"name": {name}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("set name %q: status %d", name, resp.StatusCode)
+	}
+	resp, err = c.PostForm(base+"/auth/email", url.Values{"email": {name + "@example.test"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("send code for %q: status %d", name, resp.StatusCode)
+	}
+	resp, err = c.PostForm(base+"/auth/otp", url.Values{"code": {testMail.code(t)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("verify %q: status %d", name, resp.StatusCode)
+	}
+	return c
 }
 
 // clearObstacles removes static obstacles so movement checks are not affected by random layout.
@@ -42,10 +104,10 @@ func clearObstacles(t *testing.T, s *Server, id string) {
 	m.mu.Unlock()
 }
 
-// createMatch posts to /matches and returns the new match ID from the HX-Redirect header.
-func createMatch(t *testing.T, base, name string) string {
+// createMatch posts to /matches as the player and returns the new match ID.
+func createMatch(t *testing.T, base string, c *http.Client) string {
 	t.Helper()
-	resp, err := http.PostForm(base+"/matches", url.Values{"name": {name}})
+	resp, err := c.Post(base+"/matches", "application/x-www-form-urlencoded", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,20 +116,32 @@ func createMatch(t *testing.T, base, name string) string {
 	if loc == "" {
 		t.Fatalf("no HX-Redirect from create, status %d", resp.StatusCode)
 	}
-	return strings.TrimPrefix(strings.SplitN(loc, "?", 2)[0], "/matches/")
+	return strings.TrimPrefix(loc, "/matches/")
 }
 
-func dialMatch(t *testing.T, base, id, name string) *websocket.Conn {
+// dialMatch opens the player's WebSocket for a match, sending the device cookie.
+func dialMatch(t *testing.T, base, id string, c *http.Client) *websocket.Conn {
 	t.Helper()
-	wsURL := "ws" + strings.TrimPrefix(base, "http") + "/ws/" + id + "?name=" + url.QueryEscape(name)
+	u, err := url.Parse(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cookies []string
+	for _, ck := range c.Jar.Cookies(u) {
+		cookies = append(cookies, ck.String())
+	}
+	header := http.Header{}
+	header.Set("Cookie", strings.Join(cookies, "; "))
+
+	wsURL := "ws" + strings.TrimPrefix(base, "http") + "/ws/" + id
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	c, _, err := websocket.Dial(ctx, wsURL, nil)
+	conn, _, err := websocket.Dial(ctx, wsURL, &websocket.DialOptions{HTTPHeader: header})
 	if err != nil {
-		t.Fatalf("dial %s: %v", name, err)
+		t.Fatalf("dial: %v", err)
 	}
-	t.Cleanup(func() { c.CloseNow() })
-	return c
+	t.Cleanup(func() { conn.CloseNow() })
+	return conn
 }
 
 // nextSnapshot reads the next state message from a connection.
@@ -102,11 +176,13 @@ func waitFor(t *testing.T, c *websocket.Conn, pred func(Snapshot) bool) Snapshot
 
 func TestMatchFlow(t *testing.T) {
 	srv, s := newTestServer(t)
-	id := createMatch(t, srv.URL, "alice")
+	alicePl := newPlayer(t, srv.URL, "alice")
+	bobPl := newPlayer(t, srv.URL, "bob")
+	id := createMatch(t, srv.URL, alicePl)
 	clearObstacles(t, s, id)
 
-	alice := dialMatch(t, srv.URL, id, "alice")
-	bob := dialMatch(t, srv.URL, id, "bob")
+	alice := dialMatch(t, srv.URL, id, alicePl)
+	bob := dialMatch(t, srv.URL, id, bobPl)
 
 	// Both players are in the lobby and the match has not started.
 	lobby := waitFor(t, alice, func(s Snapshot) bool { return s.Alive == 2 })
@@ -114,7 +190,6 @@ func TestMatchFlow(t *testing.T) {
 		t.Fatal("match should not be started yet")
 	}
 
-	// A late joiner is rejected once the match is not waiting anymore.
 	resp, err := http.Post(srv.URL+"/matches/"+id+"/start", "", nil)
 	if err != nil {
 		t.Fatal(err)
@@ -130,8 +205,7 @@ func TestMatchFlow(t *testing.T) {
 	}
 	startX := started.Me.X
 
-	// Move alice toward the world center so she always has room to move, and check
-	// her position changes on the server.
+	// Move alice toward the world center so she always has room to move.
 	dx := 1.0
 	if startX > worldSize/2 {
 		dx = -1.0
@@ -147,7 +221,6 @@ func TestMatchFlow(t *testing.T) {
 		t.Fatalf("alice did not move: start %v, now %v", startX, moved.Me.X)
 	}
 
-	// Bob sees alice only if she is inside his area of interest; he should see the match running.
 	bobSnap := waitFor(t, bob, func(s Snapshot) bool { return s.Started })
 	if bobSnap.Alive != 2 {
 		t.Fatalf("bob should count 2 alive, got %d", bobSnap.Alive)
@@ -156,9 +229,11 @@ func TestMatchFlow(t *testing.T) {
 
 func TestJoinRejectedAfterStart(t *testing.T) {
 	srv, _ := newTestServer(t)
-	id := createMatch(t, srv.URL, "alice")
-	alice := dialMatch(t, srv.URL, id, "alice")
-	dialMatch(t, srv.URL, id, "bob")
+	alicePl := newPlayer(t, srv.URL, "alice")
+	bobPl := newPlayer(t, srv.URL, "bobby")
+	id := createMatch(t, srv.URL, alicePl)
+	alice := dialMatch(t, srv.URL, id, alicePl)
+	dialMatch(t, srv.URL, id, bobPl)
 	waitFor(t, alice, func(s Snapshot) bool { return s.Alive == 2 })
 
 	resp, err := http.Post(srv.URL+"/matches/"+id+"/start", "", nil)
@@ -167,7 +242,8 @@ func TestJoinRejectedAfterStart(t *testing.T) {
 	}
 	resp.Body.Close()
 
-	resp, err = http.Post(srv.URL+"/matches/"+id+"/join", "application/x-www-form-urlencoded", strings.NewReader("name=carol"))
+	carolPl := newPlayer(t, srv.URL, "carol")
+	resp, err = carolPl.Post(srv.URL+"/matches/"+id+"/join", "application/x-www-form-urlencoded", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -178,18 +254,9 @@ func TestJoinRejectedAfterStart(t *testing.T) {
 }
 
 func TestIdleMatchCloses(t *testing.T) {
-	s, err := newServer()
-	if err != nil {
-		t.Fatal(err)
-	}
-	mux, err := newMux(s)
-	if err != nil {
-		t.Fatal(err)
-	}
-	srv := httptest.NewServer(mux)
-	t.Cleanup(srv.Close)
-
-	id := createMatch(t, srv.URL, "solo")
+	srv, s := newTestServer(t)
+	pl := newPlayer(t, srv.URL, "solo")
+	id := createMatch(t, srv.URL, pl)
 	m := s.get(id)
 	if m == nil {
 		t.Fatal("match not found after create")

@@ -3,7 +3,7 @@ import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 
 // World units match the server: x and y span 0..2000 on the ground plane.
 // Three.js uses Y as up, so server (x, y) maps to scene (x, height, z = y).
-const { id, name } = window.MATCH;
+const { id } = window.MATCH;
 const EYE = 17;
 const TICK_MS = 1000 / 30;
 const MINIMAP = { x: 10, y: 10, size: 150 };
@@ -462,7 +462,7 @@ const SFX = {
 
 // ---------- Networking ----------
 const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-const ws = new WebSocket(`${proto}://${location.host}/ws/${id}?name=${encodeURIComponent(name)}`);
+const ws = new WebSocket(`${proto}://${location.host}/ws/${id}`);
 let prev = null, curr = null, currAt = 0;
 
 ws.onmessage = e => {

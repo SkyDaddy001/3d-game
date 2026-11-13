@@ -1,2 +1,4 @@
 arena-server
 *.exe
+arena-data.json
+arena-data.json.tmp

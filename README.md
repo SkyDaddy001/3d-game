@@ -29,8 +29,11 @@ go run .
 Open http://localhost:8080, enter a name, and create a match. Open more tabs
 (or another browser) to join, then press **Start** once two or more players are in.
 
-Controls: move with WASD or the arrow keys, aim with the mouse, hold the mouse
-button to shoot.
+Desktop controls: move with WASD or the arrow keys, aim with the mouse, and hold the
+mouse button or Space to shoot.
+
+Touch controls: drag the joystick at bottom-left to move, touch and drag elsewhere on
+the screen to aim, and hold FIRE at bottom-right to shoot.
 
 ## Test
 

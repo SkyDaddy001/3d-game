@@ -5,17 +5,88 @@ const hud = document.getElementById('status');
 const TICK_MS = 1000 / 30;
 const lerp = (a, b, t) => a + (b - a) * t;
 
+// Touch and mouse both go through Pointer Events. Each pointer is assigned a role:
+//  - 'stick': movement joystick (bottom-left)
+//  - 'fire':  fire button (bottom-right)
+//  - 'aim':   anywhere else, sets the aim point
+const STICK = { x: 110, y: canvas.height - 110, r: 70, hit: 90 };
+const FIRE = { x: canvas.width - 110, y: canvas.height - 110, r: 55, hit: 65 };
+
 const keys = new Set();
 const mouse = { x: canvas.width / 2, y: canvas.height / 2, down: false };
+const stick = { dx: 0, dy: 0 };
+let fireHeld = false;
+let touchActive = false;
+const pointers = new Map(); // pointerId -> role
+
 addEventListener('keydown', e => keys.add(e.key.toLowerCase()));
 addEventListener('keyup', e => keys.delete(e.key.toLowerCase()));
-canvas.addEventListener('mousemove', e => {
+
+canvas.style.touchAction = 'none'; // stop the page from scrolling while playing
+
+function canvasPos(e) {
   const r = canvas.getBoundingClientRect();
-  mouse.x = (e.clientX - r.left) * canvas.width / r.width;
-  mouse.y = (e.clientY - r.top) * canvas.height / r.height;
+  return {
+    x: (e.clientX - r.left) * canvas.width / r.width,
+    y: (e.clientY - r.top) * canvas.height / r.height,
+  };
+}
+
+const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+
+function updateStick(p) {
+  const vx = p.x - STICK.x;
+  const vy = p.y - STICK.y;
+  const len = Math.hypot(vx, vy);
+  const k = len > STICK.r ? STICK.r / len : 1;
+  stick.dx = (vx * k) / STICK.r;
+  stick.dy = (vy * k) / STICK.r;
+}
+
+canvas.addEventListener('pointerdown', e => {
+  canvas.setPointerCapture(e.pointerId);
+  const p = canvasPos(e);
+  touchActive = touchActive || e.pointerType === 'touch';
+  let role;
+  if (dist(p, STICK) <= STICK.hit && touchActive) {
+    role = 'stick';
+    updateStick(p);
+  } else if (dist(p, FIRE) <= FIRE.hit && touchActive) {
+    role = 'fire';
+    fireHeld = true;
+  } else {
+    role = 'aim';
+    mouse.x = p.x;
+    mouse.y = p.y;
+    if (e.pointerType === 'mouse') mouse.down = true;
+  }
+  pointers.set(e.pointerId, role);
 });
-canvas.addEventListener('mousedown', () => (mouse.down = true));
-addEventListener('mouseup', () => (mouse.down = false));
+
+canvas.addEventListener('pointermove', e => {
+  const p = canvasPos(e);
+  const role = pointers.get(e.pointerId);
+  if (role === 'stick') updateStick(p);
+  if (role === 'aim' || (!role && e.pointerType === 'mouse')) {
+    mouse.x = p.x;
+    mouse.y = p.y;
+  }
+});
+
+function endPointer(e) {
+  const role = pointers.get(e.pointerId);
+  pointers.delete(e.pointerId);
+  if (role === 'stick') { stick.dx = 0; stick.dy = 0; }
+  if (role === 'fire') {
+    fireHeld = [...pointers.values()].includes('fire');
+  }
+  if (role === 'aim' && e.pointerType === 'mouse') mouse.down = false;
+}
+canvas.addEventListener('pointerup', endPointer);
+canvas.addEventListener('pointercancel', endPointer);
+canvas.addEventListener('pointerleave', e => {
+  if (e.pointerType === 'mouse') { mouse.down = false; }
+});
 
 const proto = location.protocol === 'https:' ? 'wss' : 'ws';
 const ws = new WebSocket(`${proto}://${location.host}/ws/${id}?name=${encodeURIComponent(name)}`);
@@ -38,10 +109,18 @@ ws.onmessage = e => {
 // which is where the camera keeps the player.
 setInterval(() => {
   if (ws.readyState !== WebSocket.OPEN) return;
-  const dx = (keys.has('d') || keys.has('arrowright') ? 1 : 0) - (keys.has('a') || keys.has('arrowleft') ? 1 : 0);
-  const dy = (keys.has('s') || keys.has('arrowdown') ? 1 : 0) - (keys.has('w') || keys.has('arrowup') ? 1 : 0);
+  const left = keys.has('a') || keys.has('arrowleft');
+  const right = keys.has('d') || keys.has('arrowright');
+  const up = keys.has('w') || keys.has('arrowup');
+  const down = keys.has('s') || keys.has('arrowdown');
+  const kx = (right ? 1 : 0) - (left ? 1 : 0);
+  const ky = (down ? 1 : 0) - (up ? 1 : 0);
+  // Keyboard and joystick are combined, then clamped to the unit square.
+  const dx = Math.max(-1, Math.min(1, kx + stick.dx));
+  const dy = Math.max(-1, Math.min(1, ky + stick.dy));
   const aim = Math.atan2(mouse.y - canvas.height / 2, mouse.x - canvas.width / 2);
-  ws.send(JSON.stringify({ t: 'input', dx, dy, aim, shoot: mouse.down }));
+  const shoot = mouse.down || fireHeld || keys.has(' ');
+  ws.send(JSON.stringify({ t: 'input', dx, dy, aim, shoot }));
 }, TICK_MS);
 
 function drawPlayer(x, y, color) {
@@ -56,6 +135,32 @@ function drawHUDText(lines) {
   ctx.textAlign = 'right';
   ctx.fillStyle = '#fff';
   lines.forEach((line, i) => ctx.fillText(line, canvas.width - 10, 20 + i * 18));
+}
+
+// On-screen controls. Drawn only after the first touch so desktop stays clean.
+function drawTouchControls() {
+  ctx.save();
+  ctx.globalAlpha = 0.35;
+  ctx.fillStyle = '#000';
+  ctx.beginPath();
+  ctx.arc(STICK.x, STICK.y, STICK.r, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#fff';
+  ctx.beginPath();
+  ctx.arc(STICK.x + stick.dx * STICK.r, STICK.y + stick.dy * STICK.r, 26, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.globalAlpha = fireHeld ? 0.7 : 0.35;
+  ctx.fillStyle = '#ef5350';
+  ctx.beginPath();
+  ctx.arc(FIRE.x, FIRE.y, FIRE.r, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 16px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('FIRE', FIRE.x, FIRE.y + 6);
+  ctx.restore();
 }
 
 function render(now) {
@@ -75,7 +180,6 @@ function render(now) {
   ctx.lineWidth = 4;
   ctx.strokeRect(0, 0, 2000, 2000);
 
-  // Obstacles.
   ctx.fillStyle = '#5b5b5b';
   for (const r of curr.obstacles) ctx.fillRect(r.x, r.y, r.w, r.h);
 
@@ -106,8 +210,8 @@ function render(now) {
   ctx.stroke();
   ctx.restore();
 
-  // Overlay: kill feed, alive count, and the end-of-match state.
   drawHUDText([`Alive: ${curr.alive}`, ...curr.events]);
+  if (touchActive) drawTouchControls();
 
   ctx.textAlign = 'center';
   if (curr.started && !curr.me.alive && !curr.over) {

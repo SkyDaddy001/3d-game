@@ -110,5 +110,5 @@ Production notes: serve over HTTPS and add `Secure` to the cookie, and do not us
 - A living teammate who holds **E** within 60 units for three seconds revives them with 30 HP.
 - A downed player who is not revived within 20 seconds bleeds out. A second lethal hit while downed
   eliminates them, and so does the zone at any time.
-- Medkit loot still restores 30 HP. Touch players have no revive button yet.
+- Medkit loot still restores 30 HP. Touch players hold the REVIVE button (bottom right) to revive.
 

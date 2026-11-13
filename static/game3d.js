@@ -270,6 +270,7 @@ const STICK = { x: 110, y: 0, r: 70, hit: 90 };
 const FIRE = { x: 0, y: 0, r: 55, hit: 65 };
 const RELOAD = { x: 0, y: 0, r: 34, hit: 42 };
 const SWAP = { x: 0, y: 0, r: 30, hit: 38 };
+const REVIVE_BTN = { x: 0, y: 0, r: 34, hit: 42 };
 
 function resize() {
   renderer.setSize(innerWidth, innerHeight);
@@ -281,6 +282,7 @@ function resize() {
   FIRE.x = innerWidth - 110; FIRE.y = innerHeight - 110;
   RELOAD.x = innerWidth - 230; RELOAD.y = innerHeight - 110;
   SWAP.x = innerWidth - 110; SWAP.y = innerHeight - 220;
+  REVIVE_BTN.x = innerWidth - 230; REVIVE_BTN.y = innerHeight - 220;
 }
 addEventListener('resize', resize);
 resize();
@@ -295,6 +297,7 @@ let yaw = 0;
 let pendingPing = null;
 let pendingReload = false;
 let pendingSwitch = 0;
+let reviveTouched = false;
 const pointers = new Map();
 
 function requestSwitch(slot) { pendingSwitch = slot; }
@@ -344,6 +347,7 @@ overlay.addEventListener('pointerdown', e => {
     if (dist(p, STICK) <= STICK.hit) { pointers.set(e.pointerId, { role: 'stick' }); updateStick(p); return; }
     if (dist(p, FIRE) <= FIRE.hit) { fireHeld = true; pointers.set(e.pointerId, { role: 'fire' }); return; }
     if (dist(p, RELOAD) <= RELOAD.hit) { pendingReload = true; pointers.set(e.pointerId, { role: 'reload' }); return; }
+    if (dist(p, REVIVE_BTN) <= REVIVE_BTN.hit) { reviveTouched = true; pointers.set(e.pointerId, { role: 'revive' }); return; }
     if (dist(p, SWAP) <= SWAP.hit) {
       if (curr) requestSwitch(((curr.ammo.slot) % 5) + 1);
       pointers.set(e.pointerId, { role: 'swap' });
@@ -386,6 +390,7 @@ function endPointer(e) {
   pointers.delete(e.pointerId);
   if (!rec) return;
   if (rec.role === 'stick') { stick.dx = 0; stick.dy = 0; }
+  if (rec.role === 'revive') reviveTouched = [...pointers.values()].some(r => r.role === 'revive');
   if (rec.role === 'fire') fireHeld = [...pointers.values()].some(r => r.role === 'fire');
   if (rec.role === 'mouse') shootHeld = false;
 }
@@ -531,7 +536,7 @@ setInterval(() => {
   pendingReload = false;
   const sw = pendingSwitch;
   pendingSwitch = 0;
-  const revive = keys.has('e');
+  const revive = keys.has('e') || reviveTouched;
   ws.send(JSON.stringify({ t: 'input', dx, dy, aim: yaw, shoot, ping, px, py, reload, switch: sw, revive }));
 }, TICK_MS);
 
@@ -806,6 +811,7 @@ function drawTouchControls() {
   drawButton(FIRE, 'FIRE', '#ef5350', fireHeld ? 0.7 : 0.35);
   drawButton({ x: RELOAD.x, y: RELOAD.y, r: RELOAD.r }, 'R', '#ffb300', 0.45);
   drawButton({ x: SWAP.x, y: SWAP.y, r: SWAP.r }, 'SWAP', '#7e57c2', 0.45);
+  drawButton(REVIVE_BTN, 'REVIVE', '#26a69a', reviveTouched ? 0.7 : 0.4);
 }
 
 function drawOverlay(now) {

@@ -15,7 +15,7 @@ import (
 	"github.com/coder/websocket"
 )
 
-func newTestServer(t *testing.T) *httptest.Server {
+func newTestServer(t *testing.T) (*httptest.Server, *Server) {
 	t.Helper()
 	s, err := newServer()
 	if err != nil {
@@ -27,7 +27,19 @@ func newTestServer(t *testing.T) *httptest.Server {
 	}
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
-	return srv
+	return srv, s
+}
+
+// clearObstacles removes static obstacles so movement checks are not affected by random layout.
+func clearObstacles(t *testing.T, s *Server, id string) {
+	t.Helper()
+	m := s.get(id)
+	if m == nil {
+		t.Fatal("match not found")
+	}
+	m.mu.Lock()
+	m.obstacles = nil
+	m.mu.Unlock()
 }
 
 // createMatch posts to /matches and returns the new match ID from the HX-Redirect header.
@@ -89,8 +101,9 @@ func waitFor(t *testing.T, c *websocket.Conn, pred func(Snapshot) bool) Snapshot
 }
 
 func TestMatchFlow(t *testing.T) {
-	srv := newTestServer(t)
+	srv, s := newTestServer(t)
 	id := createMatch(t, srv.URL, "alice")
+	clearObstacles(t, s, id)
 
 	alice := dialMatch(t, srv.URL, id, "alice")
 	bob := dialMatch(t, srv.URL, id, "bob")
@@ -142,7 +155,7 @@ func TestMatchFlow(t *testing.T) {
 }
 
 func TestJoinRejectedAfterStart(t *testing.T) {
-	srv := newTestServer(t)
+	srv, _ := newTestServer(t)
 	id := createMatch(t, srv.URL, "alice")
 	alice := dialMatch(t, srv.URL, id, "alice")
 	dialMatch(t, srv.URL, id, "bob")

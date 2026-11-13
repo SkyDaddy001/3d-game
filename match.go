@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"math"
 	"math/rand"
 	"sync"
@@ -26,6 +27,8 @@ const (
 	healAmount   = 30.0
 	maxPlayers   = 100
 	shrinkEvery  = 30.0
+	obstacleN    = 40
+	maxEvents    = 5
 )
 
 type Player struct {
@@ -34,6 +37,7 @@ type Player struct {
 	X, Y, Aim float64
 	HP        float64
 	Alive     bool
+	Place     int // final placement, set when the player is eliminated
 	DX, DY    float64
 	wantShoot bool
 	cooldown  float64
@@ -47,12 +51,21 @@ type Loot struct {
 	Y  float64 `json:"y"`
 }
 
+// Rect is a static obstacle that blocks movement and shots.
+type Rect struct {
+	X float64 `json:"x"`
+	Y float64 `json:"y"`
+	W float64 `json:"w"`
+	H float64 `json:"h"`
+}
+
 type PlayerView struct {
 	ID    int     `json:"id"`
 	X     float64 `json:"x"`
 	Y     float64 `json:"y"`
 	HP    float64 `json:"hp"`
 	Alive bool    `json:"alive"`
+	Place int     `json:"place"`
 }
 
 type Zone struct {
@@ -62,15 +75,17 @@ type Zone struct {
 }
 
 type Snapshot struct {
-	T       string       `json:"t"`
-	Started bool         `json:"started"`
-	Over    bool         `json:"over"`
-	Winner  string       `json:"winner"`
-	Alive   int          `json:"alive"`
-	Zone    Zone         `json:"zone"`
-	Me      PlayerView   `json:"me"`
-	Players []PlayerView `json:"players"`
-	Loot    []Loot       `json:"loot"`
+	T         string       `json:"t"`
+	Started   bool         `json:"started"`
+	Over      bool         `json:"over"`
+	Winner    string       `json:"winner"`
+	Alive     int          `json:"alive"`
+	Zone      Zone         `json:"zone"`
+	Me        PlayerView   `json:"me"`
+	Players   []PlayerView `json:"players"`
+	Loot      []Loot       `json:"loot"`
+	Obstacles []Rect       `json:"obstacles"`
+	Events    []string     `json:"events"`
 }
 
 type Match struct {
@@ -78,6 +93,8 @@ type Match struct {
 	ID        string
 	players   map[int]*Player
 	loot      map[int]*Loot
+	obstacles []Rect
+	events    []string
 	nextID    int
 	started   bool
 	over      bool
@@ -102,6 +119,14 @@ func NewMatch(id string) *Match {
 		zoneR:     worldSize * 0.75,
 		zoneLeft:  shrinkEvery,
 	}
+	for i := 0; i < obstacleN; i++ {
+		m.obstacles = append(m.obstacles, Rect{
+			X: rand.Float64() * (worldSize - 160),
+			Y: rand.Float64() * (worldSize - 160),
+			W: 40 + rand.Float64()*100,
+			H: 40 + rand.Float64()*100,
+		})
+	}
 	for i := 0; i < 80; i++ {
 		m.addLoot()
 	}
@@ -120,23 +145,72 @@ func (m *Match) addLoot() {
 	m.loot[id] = &Loot{ID: id, X: rand.Float64() * worldSize, Y: rand.Float64() * worldSize}
 }
 
+// blocked reports whether a player centered at (x, y) would overlap an obstacle.
+func (m *Match) blocked(x, y float64) bool {
+	for _, r := range m.obstacles {
+		if x > r.X-playerRadius && x < r.X+r.W+playerRadius &&
+			y > r.Y-playerRadius && y < r.Y+r.H+playerRadius {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *Match) logEvent(s string) {
+	m.events = append(m.events, s)
+	if len(m.events) > maxEvents {
+		m.events = m.events[len(m.events)-maxEvents:]
+	}
+}
+
+func (m *Match) countAlive() int {
+	n := 0
+	for _, p := range m.players {
+		if p.Alive {
+			n++
+		}
+	}
+	return n
+}
+
+// eliminate removes a player from the match and records their placement.
+func (m *Match) eliminate(p *Player, by string) {
+	p.HP = 0
+	p.Alive = false
+	p.Place = m.countAlive() + 1
+	m.logEvent(fmt.Sprintf("%s eliminated by %s (#%d)", p.Name, by, p.Place))
+}
+
 func (m *Match) Join(name string) (*Player, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.started || m.over || len(m.players) >= maxPlayers {
 		return nil, false
 	}
-	a := rand.Float64() * 2 * math.Pi
-	r := math.Sqrt(rand.Float64()) * m.zoneR * 0.9
+	x, y := m.spawnPoint()
 	id := m.newID()
 	p := &Player{
 		ID: id, Name: name, HP: 100, Alive: true,
-		X:    clamp(m.zoneX+r*math.Cos(a), playerRadius, worldSize-playerRadius),
-		Y:    clamp(m.zoneY+r*math.Sin(a), playerRadius, worldSize-playerRadius),
+		X: x, Y: y,
 		send: make(chan []byte, 16),
 	}
 	m.players[id] = p
 	return p, true
+}
+
+// spawnPoint picks a random spot inside the zone that is not inside an obstacle.
+func (m *Match) spawnPoint() (float64, float64) {
+	var x, y float64
+	for try := 0; try < 50; try++ {
+		a := rand.Float64() * 2 * math.Pi
+		r := math.Sqrt(rand.Float64()) * m.zoneR * 0.9
+		x = clamp(m.zoneX+r*math.Cos(a), playerRadius, worldSize-playerRadius)
+		y = clamp(m.zoneY+r*math.Sin(a), playerRadius, worldSize-playerRadius)
+		if !m.blocked(x, y) {
+			break
+		}
+	}
+	return x, y
 }
 
 func (m *Match) Leave(p *Player) {
@@ -191,7 +265,7 @@ func (m *Match) run() {
 }
 
 // tick advances the match (once started) and broadcasts snapshots.
-// It returns true when the match is finished.
+// It returns true when the match has stopped.
 func (m *Match) tick(dt float64) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -245,8 +319,15 @@ func (m *Match) step(dt float64) {
 		if !p.Alive {
 			continue
 		}
-		p.X = clamp(p.X+p.DX*moveSpeed*dt, 0, worldSize)
-		p.Y = clamp(p.Y+p.DY*moveSpeed*dt, 0, worldSize)
+		nx := clamp(p.X+p.DX*moveSpeed*dt, 0, worldSize)
+		ny := clamp(p.Y+p.DY*moveSpeed*dt, 0, worldSize)
+		// Slide along obstacles: try each axis independently.
+		if !m.blocked(nx, p.Y) {
+			p.X = nx
+		}
+		if !m.blocked(p.X, ny) {
+			p.Y = ny
+		}
 		p.cooldown -= dt
 
 		if p.wantShoot && p.cooldown <= 0 {
@@ -261,8 +342,7 @@ func (m *Match) step(dt float64) {
 		m.tryPickup(p)
 
 		if p.HP <= 0 {
-			p.HP = 0
-			p.Alive = false
+			m.eliminate(p, "the zone")
 		}
 	}
 
@@ -273,11 +353,13 @@ func (m *Match) step(dt float64) {
 			last = p
 		}
 	}
-	if alive <= 1 {
+	if alive <= 1 && !m.over {
 		m.over = true
 		m.winner = "nobody"
 		if last != nil {
+			last.Place = 1
 			m.winner = last.Name
+			m.logEvent(fmt.Sprintf("%s wins the match", last.Name))
 		}
 	}
 }
@@ -294,11 +376,47 @@ func (m *Match) shrinkZone() {
 	m.zoneR = newR
 }
 
-// fire is a hitscan ray from the shooter along its aim, hitting the nearest player in line.
+// rayRect returns the distance along the ray at which it first enters r.
+func rayRect(ox, oy, dx, dy float64, r Rect) (float64, bool) {
+	tmin, tmax := 0.0, math.Inf(1)
+	axes := [2][4]float64{
+		{ox, dx, r.X, r.X + r.W},
+		{oy, dy, r.Y, r.Y + r.H},
+	}
+	for _, ax := range axes {
+		o, d, lo, hi := ax[0], ax[1], ax[2], ax[3]
+		if math.Abs(d) < 1e-9 {
+			if o < lo || o > hi {
+				return 0, false
+			}
+			continue
+		}
+		t1, t2 := (lo-o)/d, (hi-o)/d
+		if t1 > t2 {
+			t1, t2 = t2, t1
+		}
+		tmin = math.Max(tmin, t1)
+		tmax = math.Min(tmax, t2)
+		if tmin > tmax {
+			return 0, false
+		}
+	}
+	return tmin, true
+}
+
+// fire is a hitscan ray from the shooter along its aim. Obstacles stop it, and it hits the
+// nearest player in line before any obstacle.
 func (m *Match) fire(p *Player) {
 	dx, dy := math.Cos(p.Aim), math.Sin(p.Aim)
+	wall := shotRange
+	for _, r := range m.obstacles {
+		if t, ok := rayRect(p.X, p.Y, dx, dy, r); ok && t < wall {
+			wall = t
+		}
+	}
+
 	var target *Player
-	best := shotRange
+	best := wall
 	for _, q := range m.players {
 		if q == p || !q.Alive {
 			continue
@@ -315,8 +433,7 @@ func (m *Match) fire(p *Player) {
 	if target != nil {
 		target.HP -= shotDamage
 		if target.HP <= 0 {
-			target.HP = 0
-			target.Alive = false
+			m.eliminate(target, p.Name)
 		}
 	}
 }
@@ -336,7 +453,7 @@ func (m *Match) tryPickup(p *Player) {
 }
 
 func (p *Player) view() PlayerView {
-	return PlayerView{ID: p.ID, X: p.X, Y: p.Y, HP: p.HP, Alive: p.Alive}
+	return PlayerView{ID: p.ID, X: p.X, Y: p.Y, HP: p.HP, Alive: p.Alive, Place: p.Place}
 }
 
 func near(p *Player, x, y float64) bool {
@@ -345,12 +462,7 @@ func near(p *Player, x, y float64) bool {
 
 // broadcast sends each connected player only the entities inside their area of interest.
 func (m *Match) broadcast() {
-	alive := 0
-	for _, p := range m.players {
-		if p.Alive {
-			alive++
-		}
-	}
+	alive := m.countAlive()
 	z := Zone{X: m.zoneX, Y: m.zoneY, R: m.zoneR}
 
 	for _, me := range m.players {
@@ -360,7 +472,8 @@ func (m *Match) broadcast() {
 		snap := Snapshot{
 			T: "state", Started: m.started, Over: m.over, Winner: m.winner,
 			Alive: alive, Zone: z, Me: me.view(),
-			Players: []PlayerView{}, Loot: []Loot{},
+			Players: []PlayerView{}, Loot: []Loot{}, Obstacles: []Rect{},
+			Events: append([]string{}, m.events...),
 		}
 		for _, q := range m.players {
 			if q != me && q.Alive && near(me, q.X, q.Y) {
@@ -370,6 +483,11 @@ func (m *Match) broadcast() {
 		for _, l := range m.loot {
 			if math.Hypot(me.X-l.X, me.Y-l.Y) <= aoiRadius {
 				snap.Loot = append(snap.Loot, *l)
+			}
+		}
+		for _, r := range m.obstacles {
+			if math.Hypot(me.X-(r.X+r.W/2), me.Y-(r.Y+r.H/2)) <= aoiRadius+200 {
+				snap.Obstacles = append(snap.Obstacles, r)
 			}
 		}
 		msg, _ := json.Marshal(snap)

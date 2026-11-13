@@ -29,9 +29,9 @@ ws.onmessage = e => {
   currAt = performance.now();
 
   if (!msg.started) hud.textContent = `Waiting for players (${msg.alive}), need 2+ to start`;
-  else if (msg.over) hud.textContent = `Winner: ${msg.winner}`;
+  else if (msg.over) hud.textContent = msg.me.place === 1 ? 'Victory Royale' : `Winner: ${msg.winner}`;
   else if (msg.me.alive) hud.textContent = `Alive: ${msg.alive} · HP ${Math.round(msg.me.hp)}`;
-  else hud.textContent = `You died · ${msg.alive} alive`;
+  else hud.textContent = `Eliminated · placed #${msg.me.place}`;
 };
 
 // Send input at the server's tick rate. Aim is relative to the screen center,
@@ -51,6 +51,13 @@ function drawPlayer(x, y, color) {
   ctx.fill();
 }
 
+function drawHUDText(lines) {
+  ctx.font = '14px sans-serif';
+  ctx.textAlign = 'right';
+  ctx.fillStyle = '#fff';
+  lines.forEach((line, i) => ctx.fillText(line, canvas.width - 10, 20 + i * 18));
+}
+
 function render(now) {
   requestAnimationFrame(render);
   ctx.fillStyle = '#1b2a1b';
@@ -67,6 +74,10 @@ function render(now) {
   ctx.strokeStyle = '#444';
   ctx.lineWidth = 4;
   ctx.strokeRect(0, 0, 2000, 2000);
+
+  // Obstacles.
+  ctx.fillStyle = '#5b5b5b';
+  for (const r of curr.obstacles) ctx.fillRect(r.x, r.y, r.w, r.h);
 
   ctx.fillStyle = '#f5c542';
   for (const l of curr.loot) ctx.fillRect(l.x - 5, l.y - 5, 10, 10);
@@ -95,11 +106,25 @@ function render(now) {
   ctx.stroke();
   ctx.restore();
 
-  if (curr.started && !curr.me.alive) {
+  // Overlay: kill feed, alive count, and the end-of-match state.
+  drawHUDText([`Alive: ${curr.alive}`, ...curr.events]);
+
+  ctx.textAlign = 'center';
+  if (curr.started && !curr.me.alive && !curr.over) {
     ctx.fillStyle = '#fff';
     ctx.font = '32px sans-serif';
-    ctx.textAlign = 'center';
-    ctx.fillText('You died', canvas.width / 2, canvas.height / 2);
+    ctx.fillText(`Eliminated — #${curr.me.place}`, canvas.width / 2, canvas.height / 2);
+  }
+  if (curr.over) {
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.55)';
+    ctx.fillRect(0, canvas.height / 2 - 60, canvas.width, 120);
+    ctx.fillStyle = '#ffd54f';
+    ctx.font = 'bold 36px sans-serif';
+    const title = curr.me.place === 1 ? 'Victory Royale' : `${curr.winner} wins`;
+    ctx.fillText(title, canvas.width / 2, canvas.height / 2);
+    ctx.fillStyle = '#fff';
+    ctx.font = '18px sans-serif';
+    ctx.fillText(`You placed #${curr.me.place}`, canvas.width / 2, canvas.height / 2 + 30);
   }
 }
 requestAnimationFrame(render);

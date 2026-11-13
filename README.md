@@ -10,6 +10,8 @@ carries state and inputs, htmx renders the lobby, and a canvas client draws the 
 - Shrinking zone that deals damage outside it; each shrink moves the safe center
 - Hitscan shooting with a cooldown
 - Loot (health pickups) that respawns
+- Obstacles that block movement (with sliding along walls) and stop shots
+- Kill feed, placement on elimination, and an end-of-match result screen
 - Interest management: each player only receives nearby players and loot
 - Canvas client with interpolation between server snapshots
 
@@ -53,5 +55,5 @@ drive real clients through a match.
 ## Known limitations
 
 - Matches with no connected players for 60 seconds are closed and removed.
-- Gameplay is minimal: no walls, weapon variety, or vehicles.
+- Gameplay is minimal: one weapon, no vehicles, and obstacles are randomly placed rectangles.
 - The htmx script loads from a CDN.

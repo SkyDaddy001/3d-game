@@ -46,6 +46,12 @@ function updateStick(p) {
 canvas.addEventListener('pointerdown', e => {
   canvas.setPointerCapture(e.pointerId);
   const p = canvasPos(e);
+  if (inMinimap(p)) {
+    const k = 2000 / MINIMAP.size;
+    pendingPing = { x: (p.x - MINIMAP.x) * k, y: (p.y - MINIMAP.y) * k };
+    pointers.set(e.pointerId, 'minimap');
+    return;
+  }
   touchActive = touchActive || e.pointerType === 'touch';
   let role;
   if (dist(p, STICK) <= STICK.hit && touchActive) {
@@ -95,9 +101,93 @@ let prev = null, curr = null, currAt = 0;
 let lastHitSeq = 0;
 let hitFlash = { until: 0, kind: '' };
 const MINIMAP = { x: 10, y: 10, size: 150 };
+
+// Sound effects are synthesized with the Web Audio API, so no asset files are needed.
+let audioCtx = null;
+let muted = false;
+let pendingPing = null;
+let lastShotAt = 0;
+let lastEventLast = '';
+let prevZoneR = null;
+
+function ensureAudio() {
+  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  if (audioCtx.state === 'suspended') audioCtx.resume();
+}
+
+function tone(freq, dur, type = 'square', vol = 0.08, slideTo = null, delay = 0) {
+  if (!audioCtx || muted) return;
+  const t0 = audioCtx.currentTime + delay;
+  const o = audioCtx.createOscillator();
+  const g = audioCtx.createGain();
+  o.type = type;
+  o.frequency.setValueAtTime(freq, t0);
+  if (slideTo) o.frequency.exponentialRampToValueAtTime(slideTo, t0 + dur);
+  g.gain.setValueAtTime(vol, t0);
+  g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+  o.connect(g).connect(audioCtx.destination);
+  o.start(t0);
+  o.stop(t0 + dur);
+}
+
+function noiseBurst(dur, vol = 0.12) {
+  if (!audioCtx || muted) return;
+  const n = Math.floor(audioCtx.sampleRate * dur);
+  const buf = audioCtx.createBuffer(1, n, audioCtx.sampleRate);
+  const data = buf.getChannelData(0);
+  for (let i = 0; i < n; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / n);
+  const src = audioCtx.createBufferSource();
+  const g = audioCtx.createGain();
+  g.gain.value = vol;
+  src.buffer = buf;
+  src.connect(g).connect(audioCtx.destination);
+  src.start();
+}
+
+const SFX = {
+  shot: () => { noiseBurst(0.07, 0.12); tone(180, 0.06, 'sawtooth', 0.05, 60); },
+  hit: () => tone(520, 0.08, 'triangle', 0.1, 260),
+  headshot: () => { tone(880, 0.12, 'sine', 0.12, 440); tone(1320, 0.1, 'sine', 0.08, null, 0.06); },
+  kill: () => tone(120, 0.45, 'sawtooth', 0.15, 40),
+  pickup: () => { tone(440, 0.08, 'square', 0.06); tone(660, 0.12, 'square', 0.06, null, 0.08); },
+  ping: () => tone(990, 0.25, 'sine', 0.08),
+  zone: () => tone(300, 0.35, 'triangle', 0.1),
+};
+
+addEventListener('keydown', e => {
+  ensureAudio();
+  const k = e.key.toLowerCase();
+  if (k === 'm') { muted = !muted; return; }
+  if (k === 'q' && curr && curr.me.alive) {
+    const x = curr.me.x + (mouse.x - canvas.width / 2);
+    const y = curr.me.y + (mouse.y - canvas.height / 2);
+    pendingPing = { x: clamp(x, 0, 2000), y: clamp(y, 0, 2000) };
+  }
+});
+addEventListener('pointerdown', ensureAudio, { once: true });
+
+function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+
+function inMinimap(p) {
+  return p.x >= MINIMAP.x && p.x <= MINIMAP.x + MINIMAP.size &&
+         p.y >= MINIMAP.y && p.y <= MINIMAP.y + MINIMAP.size;
+}
 ws.onmessage = e => {
   const msg = JSON.parse(e.data);
   if (msg.t !== 'state') return;
+
+  if (curr) {
+    if (msg.me.alive && msg.me.hp > curr.me.hp + 1) SFX.pickup();
+    if (msg.pings.length > curr.pings.length) SFX.ping();
+  }
+  const last = msg.events[msg.events.length - 1] ?? '';
+  if (last && last !== lastEventLast) {
+    lastEventLast = last;
+    if (last.includes('eliminated')) SFX.kill();
+  }
+  if (prevZoneR !== null && msg.zone.r < prevZoneR - 0.5) SFX.zone();
+  prevZoneR = msg.zone.r;
+
   prev = curr ?? msg;
   curr = msg;
   currAt = performance.now();
@@ -105,6 +195,7 @@ ws.onmessage = e => {
   if (msg.hitSeq !== lastHitSeq) {
     lastHitSeq = msg.hitSeq;
     hitFlash = { until: performance.now() + 220, kind: msg.hitKind };
+    if (msg.hitKind === 'head') SFX.headshot(); else SFX.hit();
   }
   if (!msg.started) hud.textContent = `Waiting for players (${msg.alive}), need 2+ to start`;
   else if (msg.over) hud.textContent = msg.me.place === 1 ? 'Victory Royale' : `Winner: ${msg.winner}`;
@@ -127,7 +218,18 @@ setInterval(() => {
   const dy = Math.max(-1, Math.min(1, ky + stick.dy));
   const aim = Math.atan2(mouse.y - canvas.height / 2, mouse.x - canvas.width / 2);
   const shoot = mouse.down || fireHeld || keys.has(' ');
-  ws.send(JSON.stringify({ t: 'input', dx, dy, aim, shoot }));
+  if (shoot && curr && curr.me.alive && performance.now() - lastShotAt > 380) {
+    lastShotAt = performance.now();
+    SFX.shot();
+  }
+  let ping = false, px = 0, py = 0;
+  if (pendingPing) {
+    ping = true;
+    px = pendingPing.x;
+    py = pendingPing.y;
+    pendingPing = null;
+  }
+  ws.send(JSON.stringify({ t: 'input', dx, dy, aim, shoot, ping, px, py }));
 }, TICK_MS);
 
 function drawPlayer(x, y, color) {
@@ -232,6 +334,19 @@ function drawMinimap(curr) {
     ctx.fill();
   }
 
+  for (const pg of curr.pings) {
+    ctx.fillStyle = '#ffeb3b';
+    ctx.beginPath();
+    ctx.arc(x + pg.x * k, y + pg.y * k, 3, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  for (const mate of curr.players) {
+    if (mate.team === 0 || mate.team !== curr.me.team) continue;
+    ctx.fillStyle = '#66bb6a';
+    ctx.beginPath();
+    ctx.arc(x + mate.x * k, y + mate.y * k, 3.5, 0, Math.PI * 2);
+    ctx.fill();
+  }
   if (curr.me.alive) {
     ctx.fillStyle = '#4fc3f7';
     ctx.beginPath();
@@ -278,7 +393,8 @@ function render(now) {
   const prevById = new Map(prev.players.map(p => [p.id, p]));
   for (const p of curr.players) {
     const old = prevById.get(p.id) ?? p;
-    drawPlayer(lerp(old.x, p.x, t), lerp(old.y, p.y, t), '#ef5350');
+    const mate = curr.me.team !== 0 && p.team === curr.me.team;
+    drawPlayer(lerp(old.x, p.x, t), lerp(old.y, p.y, t), mate ? '#66bb6a' : '#ef5350');
   }
   for (const b of curr.revealed) {
     ctx.strokeStyle = '#ff5252';
@@ -290,6 +406,17 @@ function render(now) {
     ctx.font = 'bold 12px sans-serif';
     ctx.textAlign = 'center';
     ctx.fillText('BOUNTY', b.x, b.y - 28);
+  }
+  for (const pg of curr.pings) {
+    ctx.strokeStyle = '#ffeb3b';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(pg.x, pg.y, 14 + 6 * Math.sin(now / 120), 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.fillStyle = '#ffeb3b';
+    ctx.font = '11px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(`${pg.name} · PING`, pg.x, pg.y - 22);
   }
   drawPlayer(meX, meY, curr.me.alive ? '#4fc3f7' : '#607d8b');
 

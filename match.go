@@ -29,20 +29,30 @@ const (
 	shrinkEvery  = 30.0
 	obstacleN    = 40
 	maxEvents    = 5
+	headRadius   = 5.0 // a shot this close to the center counts as a headshot
+	headDamage   = 100.0
+	bloomPerShot = 0.06 // spread (radians) added per shot
+	bloomMax     = 0.3
+	bloomDecay   = 1.2 // spread (radians per second) recovered while not firing
+	bountyTime   = 8.0 // seconds a killer is revealed to everyone
 )
 
 type Player struct {
-	ID        int
-	Name      string
-	X, Y, Aim float64
-	HP        float64
-	Alive     bool
-	Place     int // final placement, set when the player is eliminated
-	DX, DY    float64
-	wantShoot bool
-	cooldown  float64
-	gone      bool
-	send      chan []byte
+	ID         int
+	Name       string
+	X, Y, Aim  float64
+	HP         float64
+	Alive      bool
+	Place      int // final placement, set when the player is eliminated
+	DX, DY     float64
+	wantShoot  bool
+	cooldown   float64
+	bloom      float64 // current spread in radians; grows while firing, recovers over time
+	revealLeft float64 // seconds left during which this player is shown to everyone
+	hitSeq     int     // increments on every hit this player lands, for hit markers
+	hitKind    string  // "body" or "head" for the most recent hit
+	gone       bool
+	send       chan []byte
 }
 
 type Loot struct {
@@ -66,6 +76,7 @@ type PlayerView struct {
 	HP    float64 `json:"hp"`
 	Alive bool    `json:"alive"`
 	Place int     `json:"place"`
+	Bloom float64 `json:"bloom"`
 }
 
 type Zone struct {
@@ -86,6 +97,9 @@ type Snapshot struct {
 	Loot      []Loot       `json:"loot"`
 	Obstacles []Rect       `json:"obstacles"`
 	Events    []string     `json:"events"`
+	Revealed  []PlayerView `json:"revealed"`
+	HitSeq    int          `json:"hitSeq"`
+	HitKind   string       `json:"hitKind"`
 }
 
 type Match struct {
@@ -173,12 +187,20 @@ func (m *Match) countAlive() int {
 	return n
 }
 
-// eliminate removes a player from the match and records their placement.
-func (m *Match) eliminate(p *Player, by string) {
+// eliminate removes a player from the match, records their placement, and logs the kill.
+// killer is nil for zone deaths; a player kill reveals the killer to everyone.
+func (m *Match) eliminate(p *Player, by string, killer *Player, headshot bool) {
 	p.HP = 0
 	p.Alive = false
 	p.Place = m.countAlive() + 1
-	m.logEvent(fmt.Sprintf("%s eliminated by %s (#%d)", p.Name, by, p.Place))
+	how := ""
+	if headshot {
+		how = " (headshot)"
+	}
+	m.logEvent(fmt.Sprintf("%s eliminated by %s%s (#%d)", p.Name, by, how, p.Place))
+	if killer != nil {
+		killer.revealLeft = bountyTime
+	}
 }
 
 func (m *Match) Join(name string) (*Player, bool) {
@@ -342,8 +364,14 @@ func (m *Match) step(dt float64) {
 		m.tryPickup(p)
 
 		if p.HP <= 0 {
-			m.eliminate(p, "the zone")
+			m.eliminate(p, "the zone", nil, false)
 		}
+	}
+
+	// Spread recovers and bounties count down for everyone, including the dead.
+	for _, p := range m.players {
+		p.bloom = math.Max(0, p.bloom-bloomDecay*dt)
+		p.revealLeft = math.Max(0, p.revealLeft-dt)
 	}
 
 	alive, last := 0, (*Player)(nil)
@@ -407,7 +435,10 @@ func rayRect(ox, oy, dx, dy float64, r Rect) (float64, bool) {
 // fire is a hitscan ray from the shooter along its aim. Obstacles stop it, and it hits the
 // nearest player in line before any obstacle.
 func (m *Match) fire(p *Player) {
-	dx, dy := math.Cos(p.Aim), math.Sin(p.Aim)
+	spread := (rand.Float64()*2 - 1) * p.bloom
+	dx, dy := math.Cos(p.Aim+spread), math.Sin(p.Aim+spread)
+	p.bloom = math.Min(bloomMax, p.bloom+bloomPerShot)
+
 	wall := shotRange
 	for _, r := range m.obstacles {
 		if t, ok := rayRect(p.X, p.Y, dx, dy, r); ok && t < wall {
@@ -416,6 +447,7 @@ func (m *Match) fire(p *Player) {
 	}
 
 	var target *Player
+	var targetHead bool
 	best := wall
 	for _, q := range m.players {
 		if q == p || !q.Alive {
@@ -426,15 +458,24 @@ func (m *Match) fire(p *Player) {
 		if t < 0 || t > best {
 			continue
 		}
-		if math.Abs(vx*dy-vy*dx) <= playerRadius {
+		perp := math.Abs(vx*dy - vy*dx)
+		if perp <= playerRadius {
 			target, best = q, t
+			targetHead = perp <= headRadius
 		}
 	}
-	if target != nil {
-		target.HP -= shotDamage
-		if target.HP <= 0 {
-			m.eliminate(target, p.Name)
-		}
+	if target == nil {
+		return
+	}
+	dmg, kind := shotDamage, "body"
+	if targetHead {
+		dmg, kind = headDamage, "head"
+	}
+	target.HP -= dmg
+	p.hitSeq++
+	p.hitKind = kind
+	if target.HP <= 0 {
+		m.eliminate(target, p.Name, p, targetHead)
 	}
 }
 
@@ -473,7 +514,13 @@ func (m *Match) broadcast() {
 			T: "state", Started: m.started, Over: m.over, Winner: m.winner,
 			Alive: alive, Zone: z, Me: me.view(),
 			Players: []PlayerView{}, Loot: []Loot{}, Obstacles: []Rect{},
-			Events: append([]string{}, m.events...),
+			Events: append([]string{}, m.events...), Revealed: []PlayerView{},
+			HitSeq: me.hitSeq, HitKind: me.hitKind,
+		}
+		for _, q := range m.players {
+			if q != me && q.Alive && !q.gone && q.revealLeft > 0 {
+				snap.Revealed = append(snap.Revealed, q.view())
+			}
 		}
 		for _, q := range m.players {
 			if q != me && q.Alive && near(me, q.X, q.Y) {

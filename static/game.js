@@ -92,6 +92,9 @@ const proto = location.protocol === 'https:' ? 'wss' : 'ws';
 const ws = new WebSocket(`${proto}://${location.host}/ws/${id}?name=${encodeURIComponent(name)}`);
 
 let prev = null, curr = null, currAt = 0;
+let lastHitSeq = 0;
+let hitFlash = { until: 0, kind: '' };
+const MINIMAP = { x: 10, y: 10, size: 150 };
 ws.onmessage = e => {
   const msg = JSON.parse(e.data);
   if (msg.t !== 'state') return;
@@ -99,6 +102,10 @@ ws.onmessage = e => {
   curr = msg;
   currAt = performance.now();
 
+  if (msg.hitSeq !== lastHitSeq) {
+    lastHitSeq = msg.hitSeq;
+    hitFlash = { until: performance.now() + 220, kind: msg.hitKind };
+  }
   if (!msg.started) hud.textContent = `Waiting for players (${msg.alive}), need 2+ to start`;
   else if (msg.over) hud.textContent = msg.me.place === 1 ? 'Victory Royale' : `Winner: ${msg.winner}`;
   else if (msg.me.alive) hud.textContent = `Alive: ${msg.alive} · HP ${Math.round(msg.me.hp)}`;
@@ -163,6 +170,79 @@ function drawTouchControls() {
   ctx.restore();
 }
 
+// Crosshair ticks spread outward as bloom grows, like a real weapon's accuracy ring.
+function drawCrosshair(bloom) {
+  const gap = 6 + bloom * 200;
+  const cx = canvas.width / 2, cy = canvas.height / 2;
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(cx - gap - 8, cy); ctx.lineTo(cx - gap, cy);
+  ctx.moveTo(cx + gap, cy);     ctx.lineTo(cx + gap + 8, cy);
+  ctx.moveTo(cx, cy - gap - 8); ctx.lineTo(cx, cy - gap);
+  ctx.moveTo(cx, cy + gap);     ctx.lineTo(cx, cy + gap + 8);
+  ctx.stroke();
+}
+
+function drawHitMarker(now) {
+  if (now > hitFlash.until) return;
+  const cx = canvas.width / 2, cy = canvas.height / 2;
+  const head = hitFlash.kind === 'head';
+  ctx.strokeStyle = head ? '#ff5252' : '#fff';
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  for (const [dx, dy] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
+    ctx.moveTo(cx + dx * 8, cy + dy * 8);
+    ctx.lineTo(cx + dx * 16, cy + dy * 16);
+  }
+  ctx.stroke();
+  if (head) {
+    ctx.fillStyle = '#ff5252';
+    ctx.font = 'bold 16px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('HEADSHOT', cx, cy - 26);
+  }
+}
+
+// Minimap: zone, obstacles, the local player, and anyone currently revealed by a bounty.
+function drawMinimap(curr) {
+  const { x, y, size } = MINIMAP;
+  const k = size / 2000;
+  ctx.save();
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+  ctx.fillRect(x, y, size, size);
+  ctx.beginPath();
+  ctx.rect(x, y, size, size);
+  ctx.clip();
+
+  ctx.strokeStyle = '#fff';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.arc(x + curr.zone.x * k, y + curr.zone.y * k, curr.zone.r * k, 0, Math.PI * 2);
+  ctx.stroke();
+
+  ctx.fillStyle = '#666';
+  for (const r of curr.obstacles) ctx.fillRect(x + r.x * k, y + r.y * k, Math.max(2, r.w * k), Math.max(2, r.h * k));
+
+  const pulse = 0.5 + 0.5 * Math.sin(performance.now() / 150);
+  for (const b of curr.revealed) {
+    ctx.fillStyle = `rgba(255, 82, 82, ${0.5 + 0.5 * pulse})`;
+    ctx.beginPath();
+    ctx.arc(x + b.x * k, y + b.y * k, 4, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  if (curr.me.alive) {
+    ctx.fillStyle = '#4fc3f7';
+    ctx.beginPath();
+    ctx.arc(x + curr.me.x * k, y + curr.me.y * k, 4, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)';
+  ctx.strokeRect(x, y, size, size);
+}
+
 function render(now) {
   requestAnimationFrame(render);
   ctx.fillStyle = '#1b2a1b';
@@ -200,6 +280,17 @@ function render(now) {
     const old = prevById.get(p.id) ?? p;
     drawPlayer(lerp(old.x, p.x, t), lerp(old.y, p.y, t), '#ef5350');
   }
+  for (const b of curr.revealed) {
+    ctx.strokeStyle = '#ff5252';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(b.x, b.y, 22 + 4 * Math.sin(now / 150), 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.fillStyle = '#ff5252';
+    ctx.font = 'bold 12px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('BOUNTY', b.x, b.y - 28);
+  }
   drawPlayer(meX, meY, curr.me.alive ? '#4fc3f7' : '#607d8b');
 
   const aim = Math.atan2(mouse.y - canvas.height / 2, mouse.x - canvas.width / 2);
@@ -211,6 +302,11 @@ function render(now) {
   ctx.restore();
 
   drawHUDText([`Alive: ${curr.alive}`, ...curr.events]);
+  if (curr.me.alive) {
+    drawCrosshair(curr.me.bloom);
+    drawHitMarker(now);
+  }
+  drawMinimap(curr);
   if (touchActive) drawTouchControls();
 
   ctx.textAlign = 'center';

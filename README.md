@@ -12,6 +12,10 @@ carries state and inputs, htmx renders the lobby, and a canvas client draws the 
 - Loot (health pickups) that respawns
 - Obstacles that block movement (with sliding along walls) and stop shots
 - Kill feed, placement on elimination, and an end-of-match result screen
+- Headshots (100 damage, instant kill) and body shots (25 damage) with hit markers
+- Weapon spread that grows while firing and recovers when you stop
+- Bounty reveal: a player who gets a kill shows on every survivor's minimap and in the
+  world for 8 seconds, so kills make you a target
 - Interest management: each player only receives nearby players and loot
 - Canvas client with interpolation between server snapshots
 

@@ -20,3 +20,29 @@ jobs:
         run: go test -race -count=1 ./...
       - name: Build
         run: go build -o /tmp/arena-server .
+
+  notify:
+    name: Telegram notification
+    needs: test
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send status to Telegram
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          RESULT: ${{ needs.test.result }}
+        run: |
+          if [ -z "$TELEGRAM_BOT_TOKEN" ] || [ -z "$TELEGRAM_CHAT_ID" ]; then
+            echo "Telegram secrets not set; skipping notification."
+            exit 0
+          fi
+          if [ "$RESULT" = "success" ]; then icon="✅"; else icon="❌"; fi
+          text="$icon CI $RESULT for ${GITHUB_REPOSITORY}
+          Branch: ${GITHUB_REF_NAME}
+          Commit: ${GITHUB_SHA::7}
+          Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          curl -fsS -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
+            --data-urlencode "text=${text}" \
+            --data-urlencode "disable_web_page_preview=true" > /dev/null

@@ -41,6 +41,31 @@ const (
 	minDuos      = 4 // teams of two only form with at least this many players
 )
 
+// Weapon describes one weapon type. Players carry one magazine and reserve per weapon.
+type Weapon struct {
+	Name         string
+	Mag          int
+	Reserve      int
+	Interval     float64 // seconds between shots
+	ReloadTime   float64 // seconds to reload
+	Damage       float64 // body damage per pellet
+	HeadDamage   float64 // headshot damage per pellet
+	Pellets      int     // rays per shot (shotguns fire several)
+	Spread       float64 // base spread in radians
+	BloomPerShot float64
+	BloomMax     float64
+	Range        float64
+	Auto         bool // holding fire keeps shooting; otherwise each press fires once
+}
+
+var weapons = []Weapon{
+	{Name: "Pistol", Mag: 12, Reserve: 60, Interval: 0.25, ReloadTime: 1.4, Damage: 25, HeadDamage: 100, Pellets: 1, Spread: 0.01, BloomPerShot: 0.04, BloomMax: 0.15, Range: 500},
+	{Name: "SMG", Mag: 30, Reserve: 150, Interval: 0.075, ReloadTime: 1.8, Damage: 18, HeadDamage: 54, Pellets: 1, Spread: 0.02, BloomPerShot: 0.02, BloomMax: 0.22, Range: 400, Auto: true},
+	{Name: "Rifle", Mag: 30, Reserve: 120, Interval: 0.1, ReloadTime: 2.2, Damage: 28, HeadDamage: 84, Pellets: 1, Spread: 0.01, BloomPerShot: 0.03, BloomMax: 0.2, Range: 600, Auto: true},
+	{Name: "Shotgun", Mag: 6, Reserve: 30, Interval: 0.9, ReloadTime: 2.4, Damage: 14, HeadDamage: 40, Pellets: 8, Spread: 0.12, Range: 300},
+	{Name: "Sniper", Mag: 5, Reserve: 20, Interval: 1.2, ReloadTime: 2.8, Damage: 80, HeadDamage: 100, Pellets: 1, Spread: 0, Range: 2000},
+}
+
 type Player struct {
 	ID         int
 	Name       string
@@ -57,8 +82,16 @@ type Player struct {
 	pingCool   float64
 	bloom      float64 // current spread in radians; grows while firing, recovers over time
 	revealLeft float64 // seconds left during which this player is shown to everyone
-	hitSeq     int     // increments on every hit this player lands, for hit markers
-	hitKind    string  // "body" or "head" for the most recent hit
+	weapon     int     // index into weapons
+	mags       [5]int  // rounds in the magazine, per weapon
+	reserves   [5]int  // spare rounds, per weapon
+	armed      bool    // ammo is initialized on first use
+	reloadLeft float64 // seconds left in a reload; zero when not reloading
+	prevShoot  bool    // whether fire was held last tick, for semi-auto weapons
+	wantReload bool
+	switchTo   int    // 1-based slot requested this tick, zero for none
+	hitSeq     int    // increments on every hit this player lands, for hit markers
+	hitKind    string // "body" or "head" for the most recent hit
 	gone       bool
 	send       chan []byte
 }
@@ -69,6 +102,8 @@ type Controls struct {
 	Shoot       bool
 	Ping        bool
 	PX, PY      float64 // world position to ping
+	Reload      bool
+	Switch      int // 1-based weapon slot, zero for none
 }
 
 type Point struct {
@@ -98,16 +133,28 @@ type Rect struct {
 	H float64 `json:"h"`
 }
 
+type AmmoView struct {
+	Weapon     string  `json:"weapon"`
+	Slot       int     `json:"slot"`
+	Mag        int     `json:"mag"`
+	Reserve    int     `json:"reserve"`
+	Reloading  bool    `json:"reloading"`
+	ReloadFrac float64 `json:"reloadFrac"`
+	Auto       bool    `json:"auto"`
+	Range      float64 `json:"range"`
+}
+
 type PlayerView struct {
-	ID    int     `json:"id"`
-	Name  string  `json:"name"`
-	Team  int     `json:"team"`
-	X     float64 `json:"x"`
-	Y     float64 `json:"y"`
-	HP    float64 `json:"hp"`
-	Alive bool    `json:"alive"`
-	Place int     `json:"place"`
-	Bloom float64 `json:"bloom"`
+	Weapon string  `json:"weapon"`
+	ID     int     `json:"id"`
+	Name   string  `json:"name"`
+	Team   int     `json:"team"`
+	X      float64 `json:"x"`
+	Y      float64 `json:"y"`
+	HP     float64 `json:"hp"`
+	Alive  bool    `json:"alive"`
+	Place  int     `json:"place"`
+	Bloom  float64 `json:"bloom"`
 }
 
 type Zone struct {
@@ -132,6 +179,7 @@ type Snapshot struct {
 	Pings     []Ping       `json:"pings"`
 	HitSeq    int          `json:"hitSeq"`
 	HitKind   string       `json:"hitKind"`
+	Ammo      AmmoView     `json:"ammo"`
 }
 
 type Match struct {
@@ -307,6 +355,12 @@ func (m *Match) Input(p *Player, c Controls) {
 		p.wantPing = true
 		p.pingAt = Point{X: c.PX, Y: c.PY}
 	}
+	if c.Reload {
+		p.wantReload = true
+	}
+	if c.Switch > 0 {
+		p.switchTo = c.Switch
+	}
 }
 
 func (m *Match) Start() bool {
@@ -408,12 +462,7 @@ func (m *Match) step(dt float64) {
 		}
 		p.cooldown -= dt
 		p.pingCool -= dt
-
-		if p.wantShoot && p.cooldown <= 0 {
-			m.fire(p)
-			p.cooldown = shotCooldown
-		}
-		p.wantShoot = false
+		m.updateWeapon(p, dt)
 
 		if p.wantPing && p.pingCool <= 0 {
 			m.pings = append(m.pings, Ping{X: p.pingAt.X, Y: p.pingAt.Y, Name: p.Name, Left: pingTime, team: p.Team})
@@ -529,14 +578,99 @@ func rayRect(ox, oy, dx, dy float64, r Rect) (float64, bool) {
 	return tmin, true
 }
 
-// fire is a hitscan ray from the shooter along its aim, with weapon spread. Obstacles stop
-// it, teammates are not hit, and the nearest enemy in line takes damage.
-func (m *Match) fire(p *Player) {
-	spread := (rand.Float64()*2 - 1) * p.bloom
-	dx, dy := math.Cos(p.Aim+spread), math.Sin(p.Aim+spread)
-	p.bloom = math.Min(bloomMax, p.bloom+bloomPerShot)
+// ensureAmmo fills a player's magazines and reserves the first time they are needed.
+func (p *Player) ensureAmmo() {
+	if p.armed {
+		return
+	}
+	p.armed = true
+	for i, w := range weapons {
+		p.mags[i] = w.Mag
+		p.reserves[i] = w.Reserve
+	}
+}
 
-	wall := shotRange
+func (p *Player) ammoView() AmmoView {
+	p.ensureAmmo()
+	w := weapons[p.weapon]
+	frac := 0.0
+	if p.reloadLeft > 0 {
+		frac = 1 - p.reloadLeft/w.ReloadTime
+	}
+	return AmmoView{
+		Weapon: w.Name, Slot: p.weapon + 1, Mag: p.mags[p.weapon], Reserve: p.reserves[p.weapon],
+		Reloading: p.reloadLeft > 0, ReloadFrac: frac, Auto: w.Auto, Range: w.Range,
+	}
+}
+
+// updateWeapon handles switching, reloading, and firing for one player and one tick.
+func (m *Match) updateWeapon(p *Player, dt float64) {
+	p.ensureAmmo()
+	if p.switchTo > 0 && p.switchTo <= len(weapons) && p.switchTo-1 != p.weapon {
+		p.weapon = p.switchTo - 1
+		p.reloadLeft = 0
+	}
+	p.switchTo = 0
+
+	w := weapons[p.weapon]
+	if p.reloadLeft > 0 {
+		p.reloadLeft -= dt
+		if p.reloadLeft <= 0 {
+			p.reloadLeft = 0
+			take := min(w.Mag-p.mags[p.weapon], p.reserves[p.weapon])
+			p.mags[p.weapon] += take
+			p.reserves[p.weapon] -= take
+		}
+	}
+	if p.wantReload && p.reloadLeft == 0 && p.mags[p.weapon] < w.Mag && p.reserves[p.weapon] > 0 {
+		p.reloadLeft = w.ReloadTime
+	}
+	p.wantReload = false
+
+	trigger := p.wantShoot && (w.Auto || !p.prevShoot)
+	if trigger && p.cooldown <= 0 && p.reloadLeft == 0 {
+		if p.mags[p.weapon] > 0 {
+			m.fire(p)
+			p.cooldown = w.Interval
+		} else if p.reserves[p.weapon] > 0 {
+			p.reloadLeft = w.ReloadTime
+		}
+	}
+	p.prevShoot = p.wantShoot
+	p.wantShoot = false
+}
+
+// fire spends one round and shoots the current weapon's pellets with spread and bloom.
+func (m *Match) fire(p *Player) {
+	p.ensureAmmo()
+	w := weapons[p.weapon]
+	if p.mags[p.weapon] <= 0 {
+		return
+	}
+	p.mags[p.weapon]--
+
+	hitAny, hitHead := false, false
+	for i := 0; i < w.Pellets; i++ {
+		spread := (rand.Float64()*2 - 1) * (w.Spread + p.bloom)
+		hit, head := m.shootRay(p, p.Aim+spread, w.Range, w.Damage, w.HeadDamage)
+		hitAny = hitAny || hit
+		hitHead = hitHead || head
+	}
+	p.bloom = math.Min(w.BloomMax, p.bloom+w.BloomPerShot)
+	if hitAny {
+		p.hitSeq++
+		p.hitKind = "body"
+		if hitHead {
+			p.hitKind = "head"
+		}
+	}
+}
+
+// shootRay traces one ray. Obstacles stop it, teammates are passed through, and the nearest
+// enemy in line takes damage. It reports whether a player was hit and whether it was a headshot.
+func (m *Match) shootRay(p *Player, angle, reach, dmg, headDmg float64) (bool, bool) {
+	dx, dy := math.Cos(angle), math.Sin(angle)
+	wall := reach
 	for _, r := range m.obstacles {
 		if t, ok := rayRect(p.X, p.Y, dx, dy, r); ok && t < wall {
 			wall = t
@@ -562,18 +696,17 @@ func (m *Match) fire(p *Player) {
 		}
 	}
 	if target == nil {
-		return
+		return false, false
 	}
-	dmg, kind := shotDamage, "body"
+	d := dmg
 	if targetHead {
-		dmg, kind = headDamage, "head"
+		d = headDmg
 	}
-	target.HP -= dmg
-	p.hitSeq++
-	p.hitKind = kind
+	target.HP -= d
 	if target.HP <= 0 {
 		m.eliminate(target, p.Name, p, targetHead)
 	}
+	return true, targetHead
 }
 
 func (m *Match) tryPickup(p *Player) {
@@ -592,7 +725,8 @@ func (m *Match) tryPickup(p *Player) {
 
 func (p *Player) view() PlayerView {
 	return PlayerView{
-		ID: p.ID, Name: p.Name, Team: p.Team, X: p.X, Y: p.Y,
+		Weapon: weapons[p.weapon].Name,
+		ID:     p.ID, Name: p.Name, Team: p.Team, X: p.X, Y: p.Y,
 		HP: p.HP, Alive: p.Alive, Place: p.Place, Bloom: p.bloom,
 	}
 }
@@ -616,7 +750,7 @@ func (m *Match) broadcast() {
 			Alive: alive, Zone: z, Me: me.view(),
 			Players: []PlayerView{}, Loot: []Loot{}, Obstacles: []Rect{},
 			Events: append([]string{}, m.events...), Revealed: []PlayerView{},
-			Pings: []Ping{}, HitSeq: me.hitSeq, HitKind: me.hitKind,
+			Pings: []Ping{}, HitSeq: me.hitSeq, HitKind: me.hitKind, Ammo: me.ammoView(),
 		}
 		for _, q := range m.players {
 			if q == me || !q.Alive {

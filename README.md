@@ -12,6 +12,10 @@ WebSocket carries state and inputs, htmx renders the lobby, and three.js draws t
 - Loot (health pickups) that respawns
 - Obstacles that block movement (with sliding along walls) and stop shots
 - Kill feed, placement on elimination, and an end-of-match result screen
+- Five weapons with different damage, fire rate, spread, magazine size, and range:
+  Pistol (semi-auto), SMG and Rifle (automatic), Shotgun (8 pellets), and Sniper
+  (one-shot headshots)
+- R to reload, 1–5 or the mouse wheel to switch weapons, and on touch the R and SWAP buttons
 - Headshots (100 damage, instant kill) and body shots (25 damage) with hit markers
 - Weapon spread that grows while firing and recovers when you stop
 - Teams: matches with four or more players start as duos. Teammates see each other,
@@ -61,12 +65,13 @@ drive real clients through a match.
 | `match.go` | Match simulation: movement, zone, combat, loot, snapshots |
 | `server_test.go` | End-to-end tests over HTTP and WebSocket |
 | `templates/` | Lobby, match list fragment, match page (loads three.js) |
-| `static/game3d.js` | three.js first-person renderer, overlay HUD, input, sounds |
+| `static/game3d.js` | three.js first-person renderer, weapon models, overlay HUD, input, sounds |
+| `static/vendor/` | Vendored three.js r160, RoomEnvironment, and htmx 2.0.4 (MIT licensed) |
 | `.github/workflows/ci.yml` | Format check, vet, race tests, build |
 
 ## Known limitations
 
 - Matches with no connected players for 60 seconds are closed and removed.
 - Gameplay is minimal: one weapon, no vehicles, and obstacles are randomly placed rectangles.
-- htmx and three.js load from a CDN; vendor them into `static/` to run offline.
 - The 3D client has not been checked in a real browser yet; it passes a syntax check only.
+- Textures and models are generated in code. No photoreal art assets are included.

@@ -31,14 +31,16 @@ type Server struct {
 }
 
 type inputMsg struct {
-	T     string  `json:"t"`
-	DX    float64 `json:"dx"`
-	DY    float64 `json:"dy"`
-	Aim   float64 `json:"aim"`
-	Shoot bool    `json:"shoot"`
-	Ping  bool    `json:"ping"`
-	PX    float64 `json:"px"`
-	PY    float64 `json:"py"`
+	T      string  `json:"t"`
+	DX     float64 `json:"dx"`
+	DY     float64 `json:"dy"`
+	Aim    float64 `json:"aim"`
+	Shoot  bool    `json:"shoot"`
+	Ping   bool    `json:"ping"`
+	PX     float64 `json:"px"`
+	PY     float64 `json:"py"`
+	Reload bool    `json:"reload"`
+	Switch int     `json:"switch"`
 }
 
 type matchRow struct {
@@ -187,13 +189,15 @@ func (s *Server) serveWS(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		m.Input(p, Controls{
-			DX:    clamp(in.DX, -1, 1),
-			DY:    clamp(in.DY, -1, 1),
-			Aim:   in.Aim,
-			Shoot: in.Shoot,
-			Ping:  in.Ping,
-			PX:    clamp(in.PX, 0, worldSize),
-			PY:    clamp(in.PY, 0, worldSize),
+			DX:     clamp(in.DX, -1, 1),
+			DY:     clamp(in.DY, -1, 1),
+			Aim:    in.Aim,
+			Shoot:  in.Shoot,
+			Ping:   in.Ping,
+			PX:     clamp(in.PX, 0, worldSize),
+			PY:     clamp(in.PY, 0, worldSize),
+			Reload: in.Reload,
+			Switch: in.Switch,
 		})
 	}
 }

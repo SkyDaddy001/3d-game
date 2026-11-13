@@ -138,3 +138,55 @@ func TestTeammatesCannotBeShot(t *testing.T) {
 		t.Fatalf("teammate was damaged: HP %v", mate.HP)
 	}
 }
+
+func TestShotgunPelletsKill(t *testing.T) {
+	m := &Match{players: map[int]*Player{}}
+	shooter := &Player{ID: 1, Name: "a", Team: 1, X: 0, Y: 50, Alive: true, HP: 100, Aim: 0, weapon: 3}
+	target := &Player{ID: 2, Name: "b", Team: 2, X: 50, Y: 50, Alive: true, HP: 100}
+	m.players[1], m.players[2] = shooter, target
+
+	m.fire(shooter)
+	if target.Alive {
+		t.Fatalf("shotgun at close range should eliminate, HP %v", target.HP)
+	}
+	if shooter.mags[3] != weapons[3].Mag-1 {
+		t.Fatalf("one shot should spend one round: mag %d", shooter.mags[3])
+	}
+}
+
+func TestReloadRefillsMagazine(t *testing.T) {
+	m := &Match{players: map[int]*Player{}}
+	p := &Player{ID: 1, Name: "a", Alive: true, HP: 100}
+	p.ensureAmmo()
+	p.mags[0] = 2
+	p.reserves[0] = 60
+
+	p.wantReload = true
+	m.updateWeapon(p, 0.01)
+	if p.reloadLeft <= 0 {
+		t.Fatal("reload should start")
+	}
+	m.updateWeapon(p, weapons[0].ReloadTime+0.1)
+	if p.mags[0] != weapons[0].Mag {
+		t.Fatalf("magazine after reload: %d, want %d", p.mags[0], weapons[0].Mag)
+	}
+	if p.reserves[0] != 60-(weapons[0].Mag-2) {
+		t.Fatalf("reserve after reload: %d", p.reserves[0])
+	}
+}
+
+func TestSemiAutoFiresOncePerPress(t *testing.T) {
+	m := &Match{players: map[int]*Player{}}
+	p := &Player{ID: 1, Name: "a", Alive: true, HP: 100}
+	p.ensureAmmo()
+	m.players[1] = p
+
+	before := p.mags[0]
+	p.wantShoot = true
+	m.updateWeapon(p, 0.01)
+	p.wantShoot = true
+	m.updateWeapon(p, 0.01) // still held: a semi-auto pistol must not fire again
+	if p.mags[0] != before-1 {
+		t.Fatalf("pistol fired %d times while held, want 1", before-p.mags[0])
+	}
+}

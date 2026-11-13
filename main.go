@@ -36,6 +36,9 @@ type inputMsg struct {
 	DY    float64 `json:"dy"`
 	Aim   float64 `json:"aim"`
 	Shoot bool    `json:"shoot"`
+	Ping  bool    `json:"ping"`
+	PX    float64 `json:"px"`
+	PY    float64 `json:"py"`
 }
 
 type matchRow struct {
@@ -183,7 +186,15 @@ func (s *Server) serveWS(w http.ResponseWriter, r *http.Request) {
 		if json.Unmarshal(data, &in) != nil || in.T != "input" {
 			continue
 		}
-		m.Input(p, clamp(in.DX, -1, 1), clamp(in.DY, -1, 1), in.Aim, in.Shoot)
+		m.Input(p, Controls{
+			DX:    clamp(in.DX, -1, 1),
+			DY:    clamp(in.DY, -1, 1),
+			Aim:   in.Aim,
+			Shoot: in.Shoot,
+			Ping:  in.Ping,
+			PX:    clamp(in.PX, 0, worldSize),
+			PY:    clamp(in.PY, 0, worldSize),
+		})
 	}
 }
 

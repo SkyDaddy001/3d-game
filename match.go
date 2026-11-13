@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"math/rand"
+	"sort"
 	"sync"
 	"time"
 )
@@ -35,24 +36,52 @@ const (
 	bloomMax     = 0.3
 	bloomDecay   = 1.2 // spread (radians per second) recovered while not firing
 	bountyTime   = 8.0 // seconds a killer is revealed to everyone
+	pingTime     = 5.0 // seconds a team ping stays visible
+	pingCooldown = 2.0
+	minDuos      = 4 // teams of two only form with at least this many players
 )
 
 type Player struct {
 	ID         int
 	Name       string
+	Team       int
 	X, Y, Aim  float64
 	HP         float64
 	Alive      bool
 	Place      int // final placement, set when the player is eliminated
 	DX, DY     float64
 	wantShoot  bool
+	wantPing   bool
+	pingAt     Point
 	cooldown   float64
+	pingCool   float64
 	bloom      float64 // current spread in radians; grows while firing, recovers over time
 	revealLeft float64 // seconds left during which this player is shown to everyone
 	hitSeq     int     // increments on every hit this player lands, for hit markers
 	hitKind    string  // "body" or "head" for the most recent hit
 	gone       bool
 	send       chan []byte
+}
+
+// Controls is one client's input for a tick.
+type Controls struct {
+	DX, DY, Aim float64
+	Shoot       bool
+	Ping        bool
+	PX, PY      float64 // world position to ping
+}
+
+type Point struct {
+	X float64 `json:"x"`
+	Y float64 `json:"y"`
+}
+
+type Ping struct {
+	X    float64 `json:"x"`
+	Y    float64 `json:"y"`
+	Name string  `json:"name"`
+	Left float64 `json:"left"`
+	team int
 }
 
 type Loot struct {
@@ -71,6 +100,8 @@ type Rect struct {
 
 type PlayerView struct {
 	ID    int     `json:"id"`
+	Name  string  `json:"name"`
+	Team  int     `json:"team"`
 	X     float64 `json:"x"`
 	Y     float64 `json:"y"`
 	HP    float64 `json:"hp"`
@@ -98,6 +129,7 @@ type Snapshot struct {
 	Obstacles []Rect       `json:"obstacles"`
 	Events    []string     `json:"events"`
 	Revealed  []PlayerView `json:"revealed"`
+	Pings     []Ping       `json:"pings"`
 	HitSeq    int          `json:"hitSeq"`
 	HitKind   string       `json:"hitKind"`
 }
@@ -109,6 +141,7 @@ type Match struct {
 	loot      map[int]*Loot
 	obstacles []Rect
 	events    []string
+	pings     []Ping
 	nextID    int
 	started   bool
 	over      bool
@@ -220,6 +253,24 @@ func (m *Match) Join(name string) (*Player, bool) {
 	return p, true
 }
 
+// assignTeams groups players into duos when there are enough of them, otherwise each player
+// is on their own team. Teams are fixed at match start.
+func (m *Match) assignTeams() {
+	ids := make([]int, 0, len(m.players))
+	for id := range m.players {
+		ids = append(ids, id)
+	}
+	sort.Ints(ids)
+	duos := len(ids) >= minDuos
+	for i, id := range ids {
+		if duos {
+			m.players[id].Team = i/2 + 1
+		} else {
+			m.players[id].Team = i + 1
+		}
+	}
+}
+
 // spawnPoint picks a random spot inside the zone that is not inside an obstacle.
 func (m *Match) spawnPoint() (float64, float64) {
 	var x, y float64
@@ -245,12 +296,16 @@ func (m *Match) Leave(p *Player) {
 	}
 }
 
-func (m *Match) Input(p *Player, dx, dy, aim float64, shoot bool) {
+func (m *Match) Input(p *Player, c Controls) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	p.DX, p.DY, p.Aim = dx, dy, aim
-	if shoot {
+	p.DX, p.DY, p.Aim = c.DX, c.DY, c.Aim
+	if c.Shoot {
 		p.wantShoot = true
+	}
+	if c.Ping {
+		p.wantPing = true
+		p.pingAt = Point{X: c.PX, Y: c.PY}
 	}
 }
 
@@ -260,6 +315,7 @@ func (m *Match) Start() bool {
 	if m.started || len(m.players) < 2 {
 		return false
 	}
+	m.assignTeams()
 	m.started = true
 	return true
 }
@@ -351,12 +407,19 @@ func (m *Match) step(dt float64) {
 			p.Y = ny
 		}
 		p.cooldown -= dt
+		p.pingCool -= dt
 
 		if p.wantShoot && p.cooldown <= 0 {
 			m.fire(p)
 			p.cooldown = shotCooldown
 		}
 		p.wantShoot = false
+
+		if p.wantPing && p.pingCool <= 0 {
+			m.pings = append(m.pings, Ping{X: p.pingAt.X, Y: p.pingAt.Y, Name: p.Name, Left: pingTime, team: p.Team})
+			p.pingCool = pingCooldown
+		}
+		p.wantPing = false
 
 		if math.Hypot(p.X-m.zoneX, p.Y-m.zoneY) > m.zoneR {
 			p.HP -= zoneDPS * dt
@@ -368,28 +431,62 @@ func (m *Match) step(dt float64) {
 		}
 	}
 
-	// Spread recovers and bounties count down for everyone, including the dead.
+	// Spread recovers, bounties and pings count down for everyone.
 	for _, p := range m.players {
 		p.bloom = math.Max(0, p.bloom-bloomDecay*dt)
 		p.revealLeft = math.Max(0, p.revealLeft-dt)
 	}
+	live := m.pings[:0]
+	for _, pg := range m.pings {
+		pg.Left -= dt
+		if pg.Left > 0 {
+			live = append(live, pg)
+		}
+	}
+	m.pings = live
 
-	alive, last := 0, (*Player)(nil)
+	m.checkWinner()
+}
+
+// checkWinner ends the match once at most one team has living players.
+func (m *Match) checkWinner() {
+	if m.over {
+		return
+	}
+	aliveTeams := map[int]bool{}
 	for _, p := range m.players {
 		if p.Alive {
-			alive++
-			last = p
+			aliveTeams[p.Team] = true
 		}
 	}
-	if alive <= 1 && !m.over {
-		m.over = true
-		m.winner = "nobody"
-		if last != nil {
-			last.Place = 1
-			m.winner = last.Name
-			m.logEvent(fmt.Sprintf("%s wins the match", last.Name))
+	if len(aliveTeams) > 1 {
+		return
+	}
+	m.over = true
+	m.winner = "nobody"
+	for _, p := range m.players {
+		if !p.Alive {
+			continue
+		}
+		p.Place = 1
+		m.winner = p.Name
+		if len(m.teamMembers(p.Team)) > 1 {
+			m.winner = fmt.Sprintf("Team %d", p.Team)
 		}
 	}
+	if m.winner != "nobody" {
+		m.logEvent(fmt.Sprintf("%s wins the match", m.winner))
+	}
+}
+
+func (m *Match) teamMembers(team int) []*Player {
+	var out []*Player
+	for _, p := range m.players {
+		if p.Team == team && !p.gone {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // shrinkZone moves to a smaller circle whose center lies inside the old one,
@@ -432,8 +529,8 @@ func rayRect(ox, oy, dx, dy float64, r Rect) (float64, bool) {
 	return tmin, true
 }
 
-// fire is a hitscan ray from the shooter along its aim. Obstacles stop it, and it hits the
-// nearest player in line before any obstacle.
+// fire is a hitscan ray from the shooter along its aim, with weapon spread. Obstacles stop
+// it, teammates are not hit, and the nearest enemy in line takes damage.
 func (m *Match) fire(p *Player) {
 	spread := (rand.Float64()*2 - 1) * p.bloom
 	dx, dy := math.Cos(p.Aim+spread), math.Sin(p.Aim+spread)
@@ -450,7 +547,7 @@ func (m *Match) fire(p *Player) {
 	var targetHead bool
 	best := wall
 	for _, q := range m.players {
-		if q == p || !q.Alive {
+		if q == p || !q.Alive || q.Team == p.Team {
 			continue
 		}
 		vx, vy := q.X-p.X, q.Y-p.Y
@@ -494,14 +591,18 @@ func (m *Match) tryPickup(p *Player) {
 }
 
 func (p *Player) view() PlayerView {
-	return PlayerView{ID: p.ID, X: p.X, Y: p.Y, HP: p.HP, Alive: p.Alive, Place: p.Place}
+	return PlayerView{
+		ID: p.ID, Name: p.Name, Team: p.Team, X: p.X, Y: p.Y,
+		HP: p.HP, Alive: p.Alive, Place: p.Place, Bloom: p.bloom,
+	}
 }
 
 func near(p *Player, x, y float64) bool {
 	return math.Hypot(p.X-x, p.Y-y) <= aoiRadius
 }
 
-// broadcast sends each connected player only the entities inside their area of interest.
+// broadcast sends each connected player their view of the match. Teammates are always visible,
+// other players only inside the area of interest.
 func (m *Match) broadcast() {
 	alive := m.countAlive()
 	z := Zone{X: m.zoneX, Y: m.zoneY, R: m.zoneR}
@@ -515,16 +616,22 @@ func (m *Match) broadcast() {
 			Alive: alive, Zone: z, Me: me.view(),
 			Players: []PlayerView{}, Loot: []Loot{}, Obstacles: []Rect{},
 			Events: append([]string{}, m.events...), Revealed: []PlayerView{},
-			HitSeq: me.hitSeq, HitKind: me.hitKind,
+			Pings: []Ping{}, HitSeq: me.hitSeq, HitKind: me.hitKind,
 		}
 		for _, q := range m.players {
-			if q != me && q.Alive && !q.gone && q.revealLeft > 0 {
+			if q == me || !q.Alive {
+				continue
+			}
+			if q.Team == me.Team && me.Team != 0 || near(me, q.X, q.Y) {
+				snap.Players = append(snap.Players, q.view())
+			}
+			if q.revealLeft > 0 && !q.gone {
 				snap.Revealed = append(snap.Revealed, q.view())
 			}
 		}
-		for _, q := range m.players {
-			if q != me && q.Alive && near(me, q.X, q.Y) {
-				snap.Players = append(snap.Players, q.view())
+		for _, pg := range m.pings {
+			if pg.team == me.Team && me.Team != 0 {
+				snap.Pings = append(snap.Pings, pg)
 			}
 		}
 		for _, l := range m.loot {

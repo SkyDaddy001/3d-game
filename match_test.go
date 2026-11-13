@@ -24,8 +24,8 @@ func TestWallBlocksShot(t *testing.T) {
 		players:   map[int]*Player{},
 		obstacles: []Rect{{X: 100, Y: 0, W: 10, H: 100}},
 	}
-	shooter := &Player{ID: 1, Name: "a", X: 0, Y: 50, Alive: true, HP: 100, Aim: 0}
-	target := &Player{ID: 2, Name: "b", X: 200, Y: 50, Alive: true, HP: 100}
+	shooter := &Player{ID: 1, Name: "a", Team: 1, X: 0, Y: 50, Alive: true, HP: 100, Aim: 0}
+	target := &Player{ID: 2, Name: "b", Team: 2, X: 200, Y: 50, Alive: true, HP: 100}
 	m.players[1], m.players[2] = shooter, target
 
 	m.fire(shooter)
@@ -36,8 +36,8 @@ func TestWallBlocksShot(t *testing.T) {
 
 func TestEliminationPlacement(t *testing.T) {
 	m := &Match{players: map[int]*Player{}}
-	shooter := &Player{ID: 1, Name: "a", X: 0, Y: 50, Alive: true, HP: 100, Aim: 0}
-	target := &Player{ID: 2, Name: "b", X: 100, Y: 50, Alive: true, HP: 25}
+	shooter := &Player{ID: 1, Name: "a", Team: 1, X: 0, Y: 50, Alive: true, HP: 100, Aim: 0}
+	target := &Player{ID: 2, Name: "b", Team: 2, X: 100, Y: 50, Alive: true, HP: 25}
 	m.players[1], m.players[2] = shooter, target
 
 	m.fire(shooter)
@@ -55,8 +55,8 @@ func TestEliminationPlacement(t *testing.T) {
 func TestHeadshotVsBodyDamage(t *testing.T) {
 	newPair := func(targetY float64) (*Match, *Player, *Player) {
 		m := &Match{players: map[int]*Player{}}
-		shooter := &Player{ID: 1, Name: "a", X: 0, Y: 50, Alive: true, HP: 100, Aim: 0}
-		target := &Player{ID: 2, Name: "b", X: 100, Y: targetY, Alive: true, HP: 100}
+		shooter := &Player{ID: 1, Name: "a", Team: 1, X: 0, Y: 50, Alive: true, HP: 100, Aim: 0}
+		target := &Player{ID: 2, Name: "b", Team: 2, X: 100, Y: targetY, Alive: true, HP: 100}
 		m.players[1], m.players[2] = shooter, target
 		return m, shooter, target
 	}
@@ -84,7 +84,7 @@ func TestHeadshotVsBodyDamage(t *testing.T) {
 
 func TestSpreadGrowsWhileFiring(t *testing.T) {
 	m := &Match{players: map[int]*Player{}}
-	shooter := &Player{ID: 1, Name: "a", X: 0, Y: 50, Alive: true, HP: 100, Aim: 0}
+	shooter := &Player{ID: 1, Name: "a", Team: 1, X: 0, Y: 50, Alive: true, HP: 100, Aim: 0}
 	m.players[1] = shooter
 	for i := 0; i < 3; i++ {
 		m.fire(shooter)
@@ -99,12 +99,42 @@ func TestSpreadGrowsWhileFiring(t *testing.T) {
 
 func TestKillRevealsKiller(t *testing.T) {
 	m := &Match{players: map[int]*Player{}}
-	shooter := &Player{ID: 1, Name: "a", X: 0, Y: 50, Alive: true, HP: 100}
-	target := &Player{ID: 2, Name: "b", X: 100, Y: 50, Alive: true, HP: 25}
+	shooter := &Player{ID: 1, Name: "a", Team: 1, X: 0, Y: 50, Alive: true, HP: 100}
+	target := &Player{ID: 2, Name: "b", Team: 2, X: 100, Y: 50, Alive: true, HP: 25}
 	m.players[1], m.players[2] = shooter, target
 
 	m.fire(shooter)
 	if shooter.revealLeft != bountyTime {
 		t.Fatalf("killer should be revealed for %v seconds, got %v", bountyTime, shooter.revealLeft)
+	}
+}
+
+func TestTeamFormation(t *testing.T) {
+	m := &Match{players: map[int]*Player{}}
+	for i := 1; i <= 4; i++ {
+		m.players[i] = &Player{ID: i, Name: "p", Alive: true, HP: 100}
+	}
+	m.assignTeams()
+	if m.players[1].Team != m.players[2].Team || m.players[3].Team != m.players[4].Team || m.players[1].Team == m.players[3].Team {
+		t.Fatalf("four players should form two duos: %d %d %d %d",
+			m.players[1].Team, m.players[2].Team, m.players[3].Team, m.players[4].Team)
+	}
+
+	m2 := &Match{players: map[int]*Player{1: {ID: 1}, 2: {ID: 2}}}
+	m2.assignTeams()
+	if m2.players[1].Team == m2.players[2].Team {
+		t.Fatal("two players should be on separate solo teams")
+	}
+}
+
+func TestTeammatesCannotBeShot(t *testing.T) {
+	m := &Match{players: map[int]*Player{}}
+	shooter := &Player{ID: 1, Name: "a", Team: 1, X: 0, Y: 50, Alive: true, HP: 100, Aim: 0}
+	mate := &Player{ID: 2, Name: "b", Team: 1, X: 100, Y: 50, Alive: true, HP: 100}
+	m.players[1], m.players[2] = shooter, mate
+
+	m.fire(shooter)
+	if mate.HP != 100 {
+		t.Fatalf("teammate was damaged: HP %v", mate.HP)
 	}
 }

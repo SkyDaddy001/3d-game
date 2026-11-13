@@ -120,7 +120,8 @@ func (m *Match) Join(name string) (*Player, bool) {
 	id := m.newID()
 	p := &Player{
 		ID: id, Name: name, HP: 100, Alive: true,
-		X: center + r*math.Cos(a), Y: center + r*math.Sin(a),
+		X:    clamp(center+r*math.Cos(a), playerRadius, worldSize-playerRadius),
+		Y:    clamp(center+r*math.Sin(a), playerRadius, worldSize-playerRadius),
 		send: make(chan []byte, 16),
 	}
 	m.players[id] = p

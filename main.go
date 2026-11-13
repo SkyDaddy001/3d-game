@@ -182,16 +182,19 @@ func nameOr(s string) string {
 	return s
 }
 
-func main() {
+func newServer() (*Server, error) {
+	tmpl, err := template.ParseFS(templateFS, "templates/*.html")
+	if err != nil {
+		return nil, err
+	}
+	return &Server{matches: map[string]*Match{}, tmpl: tmpl}, nil
+}
+
+func newMux(s *Server) (*http.ServeMux, error) {
 	sub, err := fs.Sub(staticFS, "static")
 	if err != nil {
-		log.Fatal(err)
+		return nil, err
 	}
-	s := &Server{
-		matches: map[string]*Match{},
-		tmpl:    template.Must(template.ParseFS(templateFS, "templates/*.html")),
-	}
-
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", s.index)
 	mux.HandleFunc("GET /matches", s.listMatches)
@@ -201,7 +204,18 @@ func main() {
 	mux.HandleFunc("POST /matches/{id}/start", s.startMatch)
 	mux.HandleFunc("GET /ws/{id}", s.serveWS)
 	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.FS(sub))))
+	return mux, nil
+}
 
+func main() {
+	s, err := newServer()
+	if err != nil {
+		log.Fatal(err)
+	}
+	mux, err := newMux(s)
+	if err != nil {
+		log.Fatal(err)
+	}
 	log.Println("listening on :8080")
 	log.Fatal(http.ListenAndServe(":8080", mux))
 }

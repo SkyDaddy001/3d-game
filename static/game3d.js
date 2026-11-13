@@ -27,7 +27,7 @@ scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
 scene.fog = new THREE.Fog(0xb9cfe0, 350, 1500);
 
 // Sky: a vertical gradient on the background.
-const skyTex = makeCanvasTexture(4, 256, (g, w, h) => {
+const skyTex = makeCanvasTexture(1, (g, w, h) => {
   const grad = g.createLinearGradient(0, 0, 0, h);
   grad.addColorStop(0, '#2f5d9e');
   grad.addColorStop(0.55, '#8fb8d8');
@@ -168,21 +168,96 @@ const beaconMeshes = new Map();
 const pingMeshes = [];
 const tracers = [];
 
-function makePlayerMesh() {
+// Blocky avatar in the Roblox style: bright flat colors, a painted face, and a name tag.
+const SKIN = 0xf2c6a0, PANTS = 0x2b3a67, SHIRT_ENEMY = 0xe53935, SHIRT_MATE = 0x43a047;
+const faceTex = makeFaceTexture();
+const matFace = new THREE.MeshStandardMaterial({ map: faceTex, roughness: 0.6 });
+const matSkinB = new THREE.MeshStandardMaterial({ color: SKIN, roughness: 0.6 });
+const matPants = new THREE.MeshStandardMaterial({ color: PANTS, roughness: 0.7 });
+const matShirtEnemy = new THREE.MeshStandardMaterial({ color: SHIRT_ENEMY, roughness: 0.55 });
+const matShirtMate = new THREE.MeshStandardMaterial({ color: SHIRT_MATE, roughness: 0.55 });
+const headGeo = new THREE.BoxGeometry(10, 10, 10);
+const torsoGeo = new THREE.BoxGeometry(12, 14, 7);
+const armGeo = new THREE.BoxGeometry(4, 12, 4);
+const legGeo = new THREE.BoxGeometry(5, 12, 5);
+
+function makeFaceTexture() {
+  const c = document.createElement('canvas');
+  c.width = 64; c.height = 64;
+  const g = c.getContext('2d');
+  g.fillStyle = '#f2c6a0';
+  g.fillRect(0, 0, 64, 64);
+  g.fillStyle = '#1b1b1b';
+  g.fillRect(14, 24, 10, 12);
+  g.fillRect(40, 24, 10, 12);
+  g.fillStyle = '#ffffff';
+  g.fillRect(16, 26, 3, 3);
+  g.fillRect(42, 26, 3, 3);
+  g.fillStyle = '#7a2e1f';
+  g.fillRect(24, 44, 16, 4);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+
+function nameTag(name) {
+  const c = document.createElement('canvas');
+  c.width = 256; c.height = 64;
+  const g = c.getContext('2d');
+  g.font = 'bold 34px sans-serif';
+  g.textAlign = 'center';
+  g.lineWidth = 6;
+  g.strokeStyle = 'rgba(0,0,0,0.75)';
+  g.strokeText(name, 128, 44);
+  g.fillStyle = '#ffffff';
+  g.fillText(name, 128, 44);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: t, depthTest: false }));
+  sprite.scale.set(44, 11, 1);
+  sprite.position.y = 42;
+  return sprite;
+}
+
+function makePlayerMesh(name) {
   const g = new THREE.Group();
-  const torso = new THREE.Mesh(new THREE.BoxGeometry(14, 22, 10), matEnemyCloth);
-  torso.position.y = 26;
-  const legs = new THREE.Mesh(new THREE.BoxGeometry(12, 22, 8), matGear);
-  legs.position.y = 11;
-  const head = new THREE.Mesh(new THREE.SphereGeometry(6, 16, 12), matSkin);
-  head.position.y = 42;
-  const helmet = new THREE.Mesh(new THREE.SphereGeometry(6.6, 16, 12, 0, Math.PI * 2, 0, Math.PI / 2), matGear);
-  helmet.position.y = 43;
-  for (const m of [torso, legs, head, helmet]) { m.castShadow = true; m.receiveShadow = true; }
-  g.add(torso, legs, head, helmet);
-  g.userData.torso = torso;
+  const part = (geo, mat, x, y) => {
+    const m = new THREE.Mesh(geo, mat);
+    m.position.set(x, y, 0);
+    m.castShadow = true;
+    m.receiveShadow = true;
+    return m;
+  };
+  const legL = part(legGeo, matPants, -2.8, 6);
+  const legR = part(legGeo, matPants, 2.8, 6);
+  const torso = part(torsoGeo, matShirtEnemy, 0, 18);
+  const armL = part(armGeo, matShirtEnemy, -8, 18);
+  const armR = part(armGeo, matShirtEnemy, 8, 18);
+  const head = new THREE.Mesh(headGeo, [matSkinB, matSkinB, matSkinB, matSkinB, matFace, matSkinB]);
+  head.position.set(0, 30, 0);
+  head.castShadow = true;
+  g.add(legL, legR, torso, armL, armR, head, nameTag(name));
+  g.userData = { torso, armL, armR, legL, legR, phase: 0, lastX: null, lastY: null };
   scene.add(g);
   return g;
+}
+
+// Swing arms and legs in step with how far the player moved since the last frame.
+function animateAvatar(mesh, x, y) {
+  const u = mesh.userData;
+  if (u.lastX !== null) {
+    const d = Math.hypot(x - u.lastX, y - u.lastY);
+    u.phase += d * 0.25;
+    if (d > 0.05) mesh.rotation.y = Math.atan2(x - u.lastX, y - u.lastY);
+    const swing = Math.min(0.7, d * 0.08);
+    const s = Math.sin(u.phase) * swing;
+    u.legL.rotation.x = s;
+    u.legR.rotation.x = -s;
+    u.armL.rotation.x = -s;
+    u.armR.rotation.x = s;
+  }
+  u.lastX = x;
+  u.lastY = y;
 }
 
 // ---------- Weapon models (first-person viewmodels built from primitives) ----------
@@ -566,11 +641,15 @@ function syncPlayers() {
   for (const p of curr.players) {
     seen.add(p.id);
     let mesh = playerMeshes.get(p.id);
-    if (!mesh) { mesh = makePlayerMesh(); playerMeshes.set(p.id, mesh); }
+    if (!mesh) { mesh = makePlayerMesh(p.name); playerMeshes.set(p.id, mesh); }
     const old = prevById.get(p.id) ?? p;
     mesh.position.set(lerp(old.x, p.x, 0.5), 0, lerp(old.y, p.y, 0.5));
     const teammate = curr.me.team !== 0 && p.team === curr.me.team;
-    mesh.userData.torso.material = teammate ? matMateCloth : matEnemyCloth;
+    const shirt = teammate ? matShirtMate : matShirtEnemy;
+    mesh.userData.torso.material = shirt;
+    mesh.userData.armL.material = shirt;
+    mesh.userData.armR.material = shirt;
+    animateAvatar(mesh, mesh.position.x, mesh.position.z);
   }
   for (const [pid, mesh] of playerMeshes) {
     if (!seen.has(pid)) { scene.remove(mesh); playerMeshes.delete(pid); }

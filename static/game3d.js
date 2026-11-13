@@ -498,6 +498,7 @@ ws.onmessage = e => {
 
   if (!msg.started) hud.textContent = `Waiting for players (${msg.alive}), need 2+ to start`;
   else if (msg.over) hud.textContent = msg.me.place === 1 ? 'Victory Royale' : `Winner: ${msg.winner}`;
+  else if (msg.me.downed) hud.textContent = `DOWNED · bleeding out ${Math.ceil(msg.me.bleed)}s · teammate: hold E`;
   else if (msg.me.alive) hud.textContent = `Alive: ${msg.alive} · HP ${Math.round(msg.me.hp)}`;
   else hud.textContent = `Eliminated · placed #${msg.me.place}`;
 };
@@ -515,7 +516,7 @@ setInterval(() => {
   if (len > 1) { dx /= len; dy /= len; }
 
   const shoot = shootHeld || fireHeld || keys.has(' ');
-  if (shoot && curr && curr.me.alive && curr.ammo.mag > 0 && !curr.ammo.reloading && performance.now() - lastShotAt > 60) {
+  if (shoot && curr && curr.me.alive && !curr.me.downed && curr.ammo.mag > 0 && !curr.ammo.reloading && performance.now() - lastShotAt > 60) {
     lastShotAt = performance.now();
     onLocalShot();
   }
@@ -530,7 +531,8 @@ setInterval(() => {
   pendingReload = false;
   const sw = pendingSwitch;
   pendingSwitch = 0;
-  ws.send(JSON.stringify({ t: 'input', dx, dy, aim: yaw, shoot, ping, px, py, reload, switch: sw }));
+  const revive = keys.has('e');
+  ws.send(JSON.stringify({ t: 'input', dx, dy, aim: yaw, shoot, ping, px, py, reload, switch: sw, revive }));
 }, TICK_MS);
 
 // Local shots: play the weapon's sound, kick the viewmodel, flash the muzzle, and draw a tracer.
@@ -824,6 +826,11 @@ function drawOverlay(now) {
   if (touchActive) drawTouchControls();
 
   ctx.textAlign = 'center';
+  if (curr.started && curr.me.downed && !curr.over) {
+    ctx.fillStyle = '#ff5252';
+    ctx.font = 'bold 28px sans-serif';
+    ctx.fillText('DOWNED: a teammate can revive you (hold E)', overlay.width / 2, overlay.height / 2 + 60);
+  }
   if (curr.started && !curr.me.alive && !curr.over) {
     ctx.fillStyle = '#fff';
     ctx.font = '32px sans-serif';

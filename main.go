@@ -44,6 +44,7 @@ type inputMsg struct {
 	PY     float64 `json:"py"`
 	Reload bool    `json:"reload"`
 	Switch int     `json:"switch"`
+	Revive bool    `json:"revive"`
 }
 
 type matchRow struct {
@@ -229,6 +230,7 @@ func (s *Server) serveWS(w http.ResponseWriter, r *http.Request) {
 			PY:     clamp(in.PY, 0, worldSize),
 			Reload: in.Reload,
 			Switch: in.Switch,
+			Revive: in.Revive,
 		})
 	}
 }

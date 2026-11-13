@@ -38,6 +38,12 @@ const (
 	bountyTime   = 8.0 // seconds a killer is revealed to everyone
 	pingTime     = 5.0 // seconds a team ping stays visible
 	pingCooldown = 2.0
+	downedTime   = 20.0 // seconds a downed player can be revived before bleeding out
+	reviveTime   = 3.0  // seconds a teammate must hold revive near a downed player
+	reviveRange  = 60.0
+	regenDelay   = 5.0  // seconds without damage before health starts to recover
+	regenRate    = 10.0 // HP per second while recovering
+	revivedHP    = 30.0
 	minDuos      = 4 // teams of two only form with at least this many players
 )
 
@@ -93,6 +99,11 @@ type Player struct {
 	hitSeq     int    // increments on every hit this player lands, for hit markers
 	hitKind    string // "body" or "head" for the most recent hit
 	gone       bool
+	downed     bool    // on the ground: can be revived by a teammate, bleeds out otherwise
+	bleed      float64 // seconds left before a downed player bleeds out
+	reviveProg float64 // seconds of revive progress from a nearby teammate
+	hurtCool   float64 // seconds since last damage; health recovers when it reaches zero
+	wantRevive bool
 	send       chan []byte
 }
 
@@ -104,6 +115,7 @@ type Controls struct {
 	PX, PY      float64 // world position to ping
 	Reload      bool
 	Switch      int // 1-based weapon slot, zero for none
+	Revive      bool
 }
 
 type Point struct {
@@ -155,6 +167,8 @@ type PlayerView struct {
 	Alive  bool    `json:"alive"`
 	Place  int     `json:"place"`
 	Bloom  float64 `json:"bloom"`
+	Downed bool    `json:"downed"`
+	Bleed  float64 `json:"bleed"`
 }
 
 type Zone struct {
@@ -273,6 +287,7 @@ func (m *Match) countAlive() int {
 func (m *Match) eliminate(p *Player, by string, killer *Player, headshot bool) {
 	p.HP = 0
 	p.Alive = false
+	p.downed = false
 	p.Place = m.countAlive() + 1
 	how := ""
 	if headshot {
@@ -357,6 +372,9 @@ func (m *Match) Input(p *Player, c Controls) {
 	}
 	if c.Reload {
 		p.wantReload = true
+	}
+	if c.Revive {
+		p.wantRevive = true
 	}
 	if c.Switch > 0 {
 		p.switchTo = c.Switch
@@ -451,6 +469,18 @@ func (m *Match) step(dt float64) {
 		if !p.Alive {
 			continue
 		}
+		if p.downed {
+			p.DX, p.DY = 0, 0
+			p.wantShoot, p.wantPing, p.wantReload = false, false, false
+			p.switchTo = 0
+			p.bleed -= dt
+			if math.Hypot(p.X-m.zoneX, p.Y-m.zoneY) > m.zoneR {
+				m.eliminate(p, "the zone", nil, false)
+			} else if p.bleed <= 0 {
+				m.eliminate(p, "bleeding out", nil, false)
+			}
+			continue
+		}
 		nx := clamp(p.X+p.DX*moveSpeed*dt, 0, worldSize)
 		ny := clamp(p.Y+p.DY*moveSpeed*dt, 0, worldSize)
 		// Slide along obstacles: try each axis independently.
@@ -472,13 +502,20 @@ func (m *Match) step(dt float64) {
 
 		if math.Hypot(p.X-m.zoneX, p.Y-m.zoneY) > m.zoneR {
 			p.HP -= zoneDPS * dt
+			p.hurtCool = regenDelay
 		}
 		m.tryPickup(p)
+		p.hurtCool = math.Max(0, p.hurtCool-dt)
+		if p.hurtCool == 0 && p.HP > 0 && p.HP < 100 {
+			p.HP = math.Min(100, p.HP+regenRate*dt)
+		}
 
 		if p.HP <= 0 {
 			m.eliminate(p, "the zone", nil, false)
 		}
 	}
+
+	m.updateRevives(dt)
 
 	// Spread recovers, bounties and pings count down for everyone.
 	for _, p := range m.players {
@@ -703,10 +740,62 @@ func (m *Match) shootRay(p *Player, angle, reach, dmg, headDmg float64) (bool, b
 		d = headDmg
 	}
 	target.HP -= d
+	target.hurtCool = regenDelay
 	if target.HP <= 0 {
-		m.eliminate(target, p.Name, p, targetHead)
+		m.knockDown(target, p, targetHead)
 	}
 	return true, targetHead
+}
+
+// knockDown drops a player when their HP runs out. A teammate can revive them within downedTime.
+// A second lethal hit while downed eliminates them.
+func (m *Match) knockDown(target, killer *Player, headshot bool) {
+	if target.downed {
+		m.eliminate(target, killer.Name, killer, headshot)
+		return
+	}
+	target.HP = 0
+	target.downed = true
+	target.bleed = downedTime
+	target.reviveProg = 0
+	m.logEvent(fmt.Sprintf("%s downed by %s", target.Name, killer.Name))
+}
+
+// updateRevives advances revives. A living teammate who is holding revive within reviveRange for
+// reviveTime brings a downed player back with revivedHP.
+func (m *Match) updateRevives(dt float64) {
+	for _, d := range m.players {
+		if !d.downed || !d.Alive {
+			d.reviveProg = 0
+			continue
+		}
+		reviving := false
+		for _, r := range m.players {
+			if r == d || !r.Alive || r.downed || r.Team == 0 || r.Team != d.Team || !r.wantRevive {
+				continue
+			}
+			if math.Hypot(r.X-d.X, r.Y-d.Y) <= reviveRange {
+				reviving = true
+				break
+			}
+		}
+		if !reviving {
+			d.reviveProg = 0
+			continue
+		}
+		d.reviveProg += dt
+		if d.reviveProg >= reviveTime {
+			d.downed = false
+			d.HP = revivedHP
+			d.bleed = 0
+			d.reviveProg = 0
+			d.hurtCool = regenDelay
+			m.logEvent(d.Name + " was revived")
+		}
+	}
+	for _, p := range m.players {
+		p.wantRevive = false
+	}
 }
 
 func (m *Match) tryPickup(p *Player) {
@@ -728,6 +817,7 @@ func (p *Player) view() PlayerView {
 		Weapon: weapons[p.weapon].Name,
 		ID:     p.ID, Name: p.Name, Team: p.Team, X: p.X, Y: p.Y,
 		HP: p.HP, Alive: p.Alive, Place: p.Place, Bloom: p.bloom,
+		Downed: p.downed, Bleed: p.bleed,
 	}
 }
 

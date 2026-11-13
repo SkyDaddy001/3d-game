@@ -41,14 +41,18 @@ func TestEliminationPlacement(t *testing.T) {
 	m.players[1], m.players[2] = shooter, target
 
 	m.fire(shooter)
+	if !target.downed || !target.Alive {
+		t.Fatal("first lethal hit should down the target, not eliminate")
+	}
+	m.fire(shooter)
 	if target.Alive {
-		t.Fatal("target should be eliminated")
+		t.Fatal("second lethal hit should eliminate the downed target")
 	}
 	if target.Place != 2 {
 		t.Fatalf("placement: got #%d, want #2 with one survivor", target.Place)
 	}
-	if len(m.events) != 1 {
-		t.Fatalf("expected one kill feed event, got %d", len(m.events))
+	if len(m.events) != 2 {
+		t.Fatalf("expected two kill feed events (down and eliminate), got %d", len(m.events))
 	}
 }
 
@@ -64,10 +68,14 @@ func TestHeadshotVsBodyDamage(t *testing.T) {
 	_, shooter, target := newPair(50) // dead center: headshot
 	m := &Match{players: map[int]*Player{1: shooter, 2: target}}
 	m.fire(shooter)
-	if target.Alive || target.HP != 0 {
-		t.Fatalf("headshot should eliminate: HP %v alive %v", target.HP, target.Alive)
+	if !target.downed || target.HP != 0 {
+		t.Fatalf("headshot should down the target: HP %v downed %v", target.HP, target.downed)
 	}
-	if shooter.hitKind != "head" || shooter.hitSeq != 1 {
+	m.fire(shooter)
+	if target.Alive {
+		t.Fatal("a second headshot should eliminate")
+	}
+	if shooter.hitKind != "head" || shooter.hitSeq != 2 {
 		t.Fatalf("hit info: kind %q seq %d", shooter.hitKind, shooter.hitSeq)
 	}
 
@@ -104,6 +112,7 @@ func TestKillRevealsKiller(t *testing.T) {
 	m.players[1], m.players[2] = shooter, target
 
 	m.fire(shooter)
+	m.fire(shooter) // the first hit only downs the target; the killer is revealed on elimination
 	if shooter.revealLeft != bountyTime {
 		t.Fatalf("killer should be revealed for %v seconds, got %v", bountyTime, shooter.revealLeft)
 	}

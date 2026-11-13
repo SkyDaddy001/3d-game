@@ -101,3 +101,14 @@ With no email settings, sign-in codes are not sent and verification is unavailab
 
 Production notes: serve over HTTPS and add `Secure` to the cookie, and do not use
 `ARENA_DEV_MAIL` on a public server, because the log then holds live codes.
+
+## Health, downing, and revives
+
+- Health recovers at 10 HP per second after five seconds without taking damage.
+- When a player's health runs out from a bullet, they are **downed** instead of eliminated. A
+  downed player cannot move or shoot.
+- A living teammate who holds **E** within 60 units for three seconds revives them with 30 HP.
+- A downed player who is not revived within 20 seconds bleeds out. A second lethal hit while downed
+  eliminates them, and so does the zone at any time.
+- Medkit loot still restores 30 HP. Touch players have no revive button yet.
+

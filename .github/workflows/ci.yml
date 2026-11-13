@@ -20,6 +20,10 @@ jobs:
         run: go test -race -count=1 ./...
       - name: Build
         run: go build -o /tmp/arena-server .
+      - name: Check client script syntax
+        run: |
+          cp static/game3d.js /tmp/game3d.mjs
+          node --check /tmp/game3d.mjs
 
   notify:
     name: Telegram notification

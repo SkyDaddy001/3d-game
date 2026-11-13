@@ -1,7 +1,7 @@
 # Arena Royale
 
-A browser battle royale: a Go server runs the match authoritatively, a WebSocket
-carries state and inputs, htmx renders the lobby, and a canvas client draws the arena.
+A browser battle royale in first person: a Go server runs the match authoritatively, a
+WebSocket carries state and inputs, htmx renders the lobby, and three.js draws the arena.
 
 ## Features
 
@@ -22,7 +22,7 @@ carries state and inputs, htmx renders the lobby, and a canvas client draws the 
 - Bounty reveal: a player who gets a kill shows on every survivor's minimap and in the
   world for 8 seconds, so kills make you a target
 - Interest management: each player only receives nearby players and loot
-- Canvas client with interpolation between server snapshots
+- First-person 3D client (three.js) with interpolation between server snapshots
 
 ## Requirements
 
@@ -60,12 +60,13 @@ drive real clients through a match.
 | `main.go` | Routes, htmx handlers, WebSocket endpoint |
 | `match.go` | Match simulation: movement, zone, combat, loot, snapshots |
 | `server_test.go` | End-to-end tests over HTTP and WebSocket |
-| `templates/` | Lobby, match list fragment, match page |
-| `static/game.js` | Canvas renderer, input, interpolation |
+| `templates/` | Lobby, match list fragment, match page (loads three.js) |
+| `static/game3d.js` | three.js first-person renderer, overlay HUD, input, sounds |
 | `.github/workflows/ci.yml` | Format check, vet, race tests, build |
 
 ## Known limitations
 
 - Matches with no connected players for 60 seconds are closed and removed.
 - Gameplay is minimal: one weapon, no vehicles, and obstacles are randomly placed rectangles.
-- The htmx script loads from a CDN.
+- htmx and three.js load from a CDN; vendor them into `static/` to run offline.
+- The 3D client has not been checked in a real browser yet; it passes a syntax check only.

@@ -5,19 +5,25 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
   <title>Match {{.ID}}</title>
   <script src="https://unpkg.com/htmx.org@2.0.4"></script>
+  <script type="importmap">
+    { "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js" } }
+  </script>
   <style>
-    body { margin: 0; background: #111; color: #eee; font-family: sans-serif; }
-    #hud { text-align: center; padding: 8px; }
-    canvas { display: block; margin: 0 auto; max-width: 100vw; height: auto; aspect-ratio: 900 / 700; touch-action: none; }
+    html, body { margin: 0; height: 100%; overflow: hidden; background: #000; color: #eee; font-family: sans-serif; }
+    #scene-root, #overlay { position: fixed; inset: 0; width: 100vw; height: 100vh; }
+    #overlay { pointer-events: auto; }
+    #hud { position: fixed; top: 8px; left: 50%; transform: translateX(-50%); z-index: 10; text-align: center; }
+    #hud button { pointer-events: auto; }
   </style>
 </head>
 <body>
+  <div id="scene-root"></div>
+  <canvas id="overlay"></canvas>
   <div id="hud">
     <span id="status">Connecting…</span>
     <button hx-post="/matches/{{.ID}}/start" hx-swap="none">Start</button>
   </div>
-  <canvas id="game" width="900" height="700"></canvas>
   <script>window.MATCH = { id: {{.ID}}, name: {{.Name}} };</script>
-  <script src="/static/game.js"></script>
+  <script type="module" src="/static/game3d.js"></script>
 </body>
 </html>

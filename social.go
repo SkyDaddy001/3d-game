@@ -8,10 +8,6 @@ import (
 	"strings"
 )
 
-// maxQuickPlayers caps a quick match. Teams are formed when the match starts: duos when there are
-// at least four players, so a quick match fills into random duo teams.
-const maxQuickPlayers = 8
-
 // invite is a pending friend invitation to a match. Invites live in memory and expire when the
 // match closes or starts.
 type invite struct {
@@ -28,8 +24,8 @@ func (s *Server) quickMatch(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	var pick *Match
 	for _, m := range s.matches {
-		n, started := m.Summary()
-		if started || n >= maxQuickPlayers {
+		info := m.Info()
+		if info.Started || info.Private || info.Players >= info.Max || m.Closed() {
 			continue
 		}
 		if pick == nil || m.ID < pick.ID {

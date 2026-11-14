@@ -11,7 +11,6 @@ import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 const { id } = window.MATCH;
 const EYE = 27;
 const TICK_MS = 1000 / 30;
-const MINIMAP = { x: 10, y: 10, size: 150 };
 const lerp = (a, b, t) => a + (b - a) * t;
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 // Phones get a lighter pipeline: no bloom and smaller shadows.
@@ -238,6 +237,8 @@ scene.add(zoneMesh);
 const boxGeo = new THREE.BoxGeometry(1, 1, 1);
 const lootGeo = new RoundedBoxGeometry(11, 9, 11, 3, 2);
 const beamGeo = new THREE.CylinderGeometry(1.5, 1.5, 220, 8, 1, true);
+const coinGeo = new THREE.CylinderGeometry(6, 6, 1.6, 24).rotateX(Math.PI / 2);
+const matCoin = new THREE.MeshStandardMaterial({ color: 0xffc933, metalness: 0.9, roughness: 0.25, emissive: 0xaa6a00, emissiveIntensity: 0.5 });
 const matBeam = new THREE.MeshBasicMaterial({ color: 0xff5252, transparent: true, opacity: 0.6, depthWrite: false });
 const matPing = new THREE.MeshBasicMaterial({ color: 0xffeb3b, transparent: true, opacity: 0.75, depthWrite: false });
 const matLoot = new THREE.MeshStandardMaterial({ map: medkitTex, roughness: 0.45, emissive: 0xffffff, emissiveMap: medkitTex, emissiveIntensity: 0.25 });
@@ -625,6 +626,7 @@ const FIRE = { x: 0, y: 0, r: 55, hit: 65 };
 const RELOAD = { x: 0, y: 0, r: 34, hit: 42 };
 const SWAP = { x: 0, y: 0, r: 30, hit: 38 };
 const REVIVE_BTN = { x: 0, y: 0, r: 34, hit: 42 };
+const SHOP_BTN = { x: 0, y: 0, r: 30, hit: 38 };
 
 let VW = innerWidth, VH = innerHeight;
 function resize() {
@@ -641,6 +643,7 @@ function resize() {
   RELOAD.x = innerWidth - 230; RELOAD.y = innerHeight - 110;
   SWAP.x = innerWidth - 110; SWAP.y = innerHeight - 220;
   REVIVE_BTN.x = innerWidth - 230; REVIVE_BTN.y = innerHeight - 220;
+  SHOP_BTN.x = innerWidth - 110; SHOP_BTN.y = innerHeight - 310;
 }
 addEventListener('resize', resize);
 resize();
@@ -655,10 +658,20 @@ let yaw = 0;
 let pendingPing = null;
 let pendingReload = false;
 let pendingSwitch = 0;
+let pendingBuy = 0;
 let reviveTouched = false;
 const pointers = new Map();
 
 function requestSwitch(slot) { pendingSwitch = slot; }
+// nextOwned returns the next weapon slot the player owns, stepping forward or back.
+function nextOwned(dir) {
+  let slot = curr.ammo.slot;
+  for (let i = 0; i < 5; i++) {
+    slot = ((slot - 1 + dir + 5) % 5) + 1;
+    if (curr.ammo.owned[slot - 1]) return slot;
+  }
+  return curr.ammo.slot;
+}
 
 addEventListener('keydown', e => {
   ensureAudio();
@@ -667,7 +680,10 @@ addEventListener('keydown', e => {
   keys.add(k);
   if (k === 'm') muted = !muted;
   if (k === 'r') pendingReload = true;
-  if (k >= '1' && k <= '5') requestSwitch(Number(k));
+  if (k === 'b' && curr && curr.me.alive) { shopOpen = !shopOpen; bigMap = false; }
+  if (k === 'tab' || k === 'n') { e.preventDefault(); bigMap = !bigMap; shopOpen = false; }
+  if (k === 'escape') { shopOpen = false; bigMap = false; }
+  if (k >= '1' && k <= '5') { if (shopOpen) pendingBuy = Number(k); else requestSwitch(Number(k)); }
   if (k === 'q' && curr && curr.me.alive) {
     pendingPing = { x: curr.me.x + Math.cos(yaw) * 300, y: curr.me.y + Math.sin(yaw) * 300 };
   }
@@ -675,8 +691,7 @@ addEventListener('keydown', e => {
 addEventListener('keyup', e => keys.delete(e.key.toLowerCase()));
 overlay.addEventListener('wheel', e => {
   if (!curr) return;
-  const slot = curr.ammo.slot + (e.deltaY > 0 ? 1 : -1);
-  requestSwitch(((slot - 1 + 5) % 5) + 1);
+  requestSwitch(nextOwned(e.deltaY > 0 ? 1 : -1));
 }, { passive: true });
 
 overlay.style.touchAction = 'none';
@@ -687,7 +702,6 @@ const overlayPos = e => {
 };
 const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 const inRect = (p, r) => p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h;
-const minimapRect = { x: MINIMAP.x, y: MINIMAP.y, w: MINIMAP.size, h: MINIMAP.size };
 
 overlay.addEventListener('pointerdown', e => {
   ensureAudio();
@@ -696,10 +710,29 @@ overlay.addEventListener('pointerdown', e => {
   if (e.pointerType === 'touch') touchActive = true;
 
   if (e.pointerType === 'touch') {
-    if (inRect(p, minimapRect) && curr) {
-      const k = 2000 / MINIMAP.size;
-      pendingPing = { x: (p.x - MINIMAP.x) * k, y: (p.y - MINIMAP.y) * k };
-      pointers.set(e.pointerId, { role: 'minimap' });
+    // Open menus take the tap first: a shop row buys, the big map pings, anywhere else closes.
+    if (shopOpen) {
+      const row = shopRows.find(r => inRect(p, r));
+      if (row) pendingBuy = row.slot; else shopOpen = false;
+      pointers.set(e.pointerId, { role: 'menu' });
+      return;
+    }
+    if (bigMap && curr) {
+      const m = bigMapRect();
+      if (inRect(p, { x: m.x, y: m.y, w: m.size, h: m.size })) {
+        pendingPing = { x: (p.x - m.x) * 2000 / m.size, y: (p.y - m.y) * 2000 / m.size };
+      } else bigMap = false;
+      pointers.set(e.pointerId, { role: 'menu' });
+      return;
+    }
+    if (dist(p, { x: RADAR.cx, y: RADAR.cy }) <= RADAR.r && curr) {
+      bigMap = true;
+      pointers.set(e.pointerId, { role: 'menu' });
+      return;
+    }
+    if (dist(p, SHOP_BTN) <= SHOP_BTN.hit && curr && curr.me.alive) {
+      shopOpen = true;
+      pointers.set(e.pointerId, { role: 'menu' });
       return;
     }
     if (dist(p, STICK) <= STICK.hit) { pointers.set(e.pointerId, { role: 'stick' }); updateStick(p); return; }
@@ -707,7 +740,7 @@ overlay.addEventListener('pointerdown', e => {
     if (dist(p, RELOAD) <= RELOAD.hit) { pendingReload = true; pointers.set(e.pointerId, { role: 'reload' }); return; }
     if (dist(p, REVIVE_BTN) <= REVIVE_BTN.hit) { reviveTouched = true; pointers.set(e.pointerId, { role: 'revive' }); return; }
     if (dist(p, SWAP) <= SWAP.hit) {
-      if (curr) requestSwitch(((curr.ammo.slot) % 5) + 1);
+      if (curr) requestSwitch(nextOwned(1));
       pointers.set(e.pointerId, { role: 'swap' });
       return;
     }
@@ -821,6 +854,8 @@ const SFX = {
   reloadStart: () => { tone(900, 0.05, 'square', 0.05); tone(600, 0.05, 'square', 0.05, null, 0.35); },
   reloadDone: () => tone(1100, 0.08, 'square', 0.06),
   switch: () => tone(700, 0.04, 'square', 0.04),
+  cash: () => { tone(1200, 0.06, 'sine', 0.07); tone(1600, 0.1, 'sine', 0.07, null, 0.06); },
+  buy: () => { tone(500, 0.06, 'square', 0.06); tone(750, 0.06, 'square', 0.06, null, 0.07); tone(1000, 0.1, 'square', 0.06, null, 0.14); },
 };
 
 // ---------- Networking ----------
@@ -836,6 +871,8 @@ ws.onmessage = e => {
     if (msg.me.alive && msg.me.hp > curr.me.hp + 1) SFX.pickup();
     if (msg.pings.length > curr.pings.length) SFX.ping();
     if (msg.ammo.slot !== curr.ammo.slot) SFX.switch();
+    if (msg.ammo.credits > curr.ammo.credits) SFX.cash();
+    if (msg.ammo.credits < curr.ammo.credits) SFX.buy();
   }
   if (msg.ammo.reloading !== lastReloading) {
     lastReloading = msg.ammo.reloading;
@@ -880,7 +917,7 @@ setInterval(() => {
   const len = Math.hypot(dx, dy);
   if (len > 1) { dx /= len; dy /= len; }
 
-  const shoot = shootHeld || fireHeld || keys.has(' ');
+  const shoot = (shootHeld || fireHeld || keys.has(' ')) && !shopOpen && !bigMap;
   if (shoot && curr && curr.me.alive && !curr.me.downed && curr.ammo.mag > 0 && !curr.ammo.reloading && performance.now() - lastShotAt > 60) {
     lastShotAt = performance.now();
     onLocalShot();
@@ -897,7 +934,9 @@ setInterval(() => {
   const sw = pendingSwitch;
   pendingSwitch = 0;
   const revive = keys.has('e') || reviveTouched;
-  ws.send(JSON.stringify({ t: 'input', dx, dy, aim: yaw, shoot, ping, px, py, reload, switch: sw, revive }));
+  const buy = pendingBuy;
+  pendingBuy = 0;
+  ws.send(JSON.stringify({ t: 'input', dx, dy, aim: yaw, shoot, ping, px, py, reload, switch: sw, revive, buy }));
 }, TICK_MS);
 
 // Local shots: play the weapon's sound, kick the viewmodel, flash the muzzle, and draw a tracer.
@@ -960,7 +999,7 @@ function syncLoot(now) {
     seen.add(l.id);
     let m = lootMeshes.get(l.id);
     if (!m) {
-      m = new THREE.Mesh(lootGeo, matLoot);
+      m = l.k === 'cash' ? new THREE.Mesh(coinGeo, matCoin) : new THREE.Mesh(lootGeo, matLoot);
       m.castShadow = true;
       scene.add(m);
       lootMeshes.set(l.id, m);
@@ -1058,25 +1097,64 @@ function updateCamera(meX, meY, dt) {
 }
 let eyeHeight = EYE;
 
-// ---------- Overlay drawing ----------
+// ---------- Overlay drawing: a sci-fi heads-up display ----------
+const C = {
+  main: '#6ff3ff', dim: 'rgba(111,243,255,0.38)', faint: 'rgba(111,243,255,0.14)', bg: 'rgba(6,16,30,0.66)',
+  warn: '#ffc94a', bad: '#ff5470', good: '#7dffa6', text: '#eaffff', gold: '#ffd54f',
+};
+const font = (px, weight = 700) => `${weight} ${px}px ui-monospace, "SF Mono", Menlo, Consolas, monospace`;
+const glow = (color, blur = 8) => { ctx.shadowColor = color; ctx.shadowBlur = blur; };
+const noGlow = () => { ctx.shadowBlur = 0; };
+
+// panel draws a dark plate with two cut corners and a thin glowing edge.
+function panel(x, y, w, h, cut = 12, edge = C.dim, fill = C.bg) {
+  ctx.beginPath();
+  ctx.moveTo(x + cut, y); ctx.lineTo(x + w, y); ctx.lineTo(x + w, y + h - cut);
+  ctx.lineTo(x + w - cut, y + h); ctx.lineTo(x, y + h); ctx.lineTo(x, y + cut);
+  ctx.closePath();
+  ctx.fillStyle = fill;
+  ctx.fill();
+  ctx.strokeStyle = edge;
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+  // Corner accent.
+  ctx.strokeStyle = C.main;
+  ctx.lineWidth = 2.5;
+  ctx.beginPath(); ctx.moveTo(x, y + cut + 10); ctx.lineTo(x, y + cut); ctx.lineTo(x + cut, y); ctx.lineTo(x + cut + 10, y); ctx.stroke();
+}
+
 function drawCrosshair(bloom) {
-  const gap = 6 + bloom * 200;
+  const gap = 5 + bloom * 200;
   const cx = VW / 2, cy = VH / 2;
-  ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)';
+  glow(C.main, 6);
+  ctx.strokeStyle = C.main;
   ctx.lineWidth = 2;
   ctx.beginPath();
-  ctx.moveTo(cx - gap - 8, cy); ctx.lineTo(cx - gap, cy);
-  ctx.moveTo(cx + gap, cy);     ctx.lineTo(cx + gap + 8, cy);
-  ctx.moveTo(cx, cy - gap - 8); ctx.lineTo(cx, cy - gap);
-  ctx.moveTo(cx, cy + gap);     ctx.lineTo(cx, cy + gap + 8);
+  ctx.moveTo(cx - gap - 9, cy); ctx.lineTo(cx - gap, cy);
+  ctx.moveTo(cx + gap, cy);     ctx.lineTo(cx + gap + 9, cy);
+  ctx.moveTo(cx, cy - gap - 9); ctx.lineTo(cx, cy - gap);
+  ctx.moveTo(cx, cy + gap);     ctx.lineTo(cx, cy + gap + 9);
   ctx.stroke();
+  ctx.fillStyle = C.text;
+  ctx.fillRect(cx - 1, cy - 1, 2, 2);
+  // Thin bracket ring that widens with spread.
+  ctx.strokeStyle = C.dim;
+  ctx.lineWidth = 1;
+  const r = gap + 16;
+  for (let q = 0; q < 4; q++) {
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, q * Math.PI / 2 + 0.55, q * Math.PI / 2 + 1.02);
+    ctx.stroke();
+  }
+  noGlow();
 }
 
 function drawHitMarker(now) {
   if (now > hitFlash.until) return;
   const cx = VW / 2, cy = VH / 2;
   const head = hitFlash.kind === 'head';
-  ctx.strokeStyle = head ? '#ff5252' : '#fff';
+  glow(head ? C.bad : C.text, 8);
+  ctx.strokeStyle = head ? C.bad : C.text;
   ctx.lineWidth = 3;
   ctx.beginPath();
   for (const [dx, dy] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
@@ -1085,172 +1163,468 @@ function drawHitMarker(now) {
   }
   ctx.stroke();
   if (head) {
-    ctx.fillStyle = '#ff5252';
-    ctx.font = 'bold 16px ui-rounded, system-ui, sans-serif';
+    ctx.fillStyle = C.bad;
+    ctx.font = font(15);
     ctx.textAlign = 'center';
-    ctx.fillText('HEADSHOT', cx, cy - 26);
+    ctx.fillText('HEADSHOT', cx, cy - 30);
   }
+  noGlow();
+}
+
+// Compass strip under the status line: east is +x and south is +y in world space.
+function drawCompass() {
+  const w = Math.min(380, VW - 380), x0 = VW / 2 - w / 2, y = 62;
+  if (w < 160) return;
+  const heading = ((yaw * 180 / Math.PI + 90) % 360 + 360) % 360;
+  ctx.save();
+  ctx.beginPath(); ctx.rect(x0, y - 4, w, 30); ctx.clip();
+  ctx.textAlign = 'center';
+  const pxPerDeg = w / 120;
+  for (let d = Math.floor((heading - 60) / 15) * 15; d <= heading + 60; d += 15) {
+    const x = VW / 2 + (d - heading) * pxPerDeg;
+    const deg = ((d % 360) + 360) % 360;
+    const major = deg % 90 === 0;
+    ctx.fillStyle = major ? C.main : C.dim;
+    ctx.fillRect(x - 1, y, 2, major ? 9 : 5);
+    if (deg % 45 === 0) {
+      ctx.font = font(major ? 12 : 10);
+      ctx.fillText({ 0: 'N', 45: 'NE', 90: 'E', 135: 'SE', 180: 'S', 225: 'SW', 270: 'W', 315: 'NW' }[deg], x, y + 22);
+    }
+  }
+  ctx.restore();
+  glow(C.main, 6);
+  ctx.fillStyle = C.main;
+  ctx.beginPath(); ctx.moveTo(VW / 2 - 5, y - 6); ctx.lineTo(VW / 2 + 5, y - 6); ctx.lineTo(VW / 2, y); ctx.fill();
+  noGlow();
 }
 
 function drawAmmo() {
   const a = curr.ammo;
   // Bottom right on desktop; on touch the fire buttons live there, so the panel moves up.
-  const w = 230, h = 74, x = VW - w - 20, y = touchActive ? 120 : VH - h - 20;
-  ctx.fillStyle = 'rgba(15,20,35,0.6)';
-  ctx.beginPath(); ctx.roundRect(x, y, w, h, 16); ctx.fill();
+  const w = 250, h = 96, x = VW - w - 20, y = touchActive ? 150 : VH - h - 20;
+  panel(x, y, w, h);
   ctx.textAlign = 'left';
-  ctx.fillStyle = '#ffd54f';
-  ctx.font = 'bold 13px ui-rounded, system-ui, sans-serif';
-  ctx.fillText(`${a.slot} · ${a.weapon.toUpperCase()}${a.auto ? ' · AUTO' : ''}`, x + 16, y + 24);
-  ctx.fillStyle = a.mag === 0 ? '#ff5252' : '#fff';
-  ctx.font = 'bold 34px ui-rounded, system-ui, sans-serif';
-  ctx.fillText(`${a.mag}`, x + 16, y + 60);
-  const magW = ctx.measureText(`${a.mag}`).width;
-  ctx.fillStyle = 'rgba(255,255,255,0.7)';
-  ctx.font = '18px ui-rounded, system-ui, sans-serif';
-  ctx.fillText(`/ ${a.reserve}`, x + 24 + magW, y + 60);
+  ctx.fillStyle = C.main;
+  ctx.font = font(12);
+  ctx.fillText(`${a.weapon.toUpperCase()}${a.auto ? ' // AUTO' : ' // SEMI'}`, x + 16, y + 22);
+  ctx.textAlign = 'right';
+  ctx.fillStyle = C.gold;
+  ctx.fillText(`CR ${a.credits}`, x + w - 14, y + 22);
+  ctx.textAlign = 'left';
+  glow(a.mag === 0 ? C.bad : C.main, 10);
+  ctx.fillStyle = a.mag === 0 ? C.bad : C.text;
+  ctx.font = font(36, 800);
+  ctx.fillText(String(a.mag).padStart(2, '0'), x + 16, y + 62);
+  noGlow();
+  const magW = ctx.measureText(String(a.mag).padStart(2, '0')).width;
+  ctx.fillStyle = C.dim;
+  ctx.font = font(16);
+  ctx.fillText(`/ ${a.reserve}`, x + 24 + magW, y + 62);
+  // Weapon slots: owned ones lit, the one in hand filled.
+  for (let i = 0; i < 5; i++) {
+    const sx = x + 16 + i * 30, sy = y + 72;
+    const owned = a.owned[i], inHand = a.slot === i + 1;
+    ctx.fillStyle = inHand ? C.main : owned ? C.faint : 'rgba(255,255,255,0.04)';
+    ctx.fillRect(sx, sy, 24, 14);
+    ctx.strokeStyle = owned ? C.dim : 'rgba(255,255,255,0.12)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(sx + 0.5, sy + 0.5, 23, 13);
+    ctx.fillStyle = inHand ? '#06202a' : owned ? C.text : 'rgba(255,255,255,0.3)';
+    ctx.font = font(10);
+    ctx.textAlign = 'center';
+    ctx.fillText(String(i + 1), sx + 12, sy + 11);
+  }
+  ctx.textAlign = 'left';
   if (a.reloading) {
-    ctx.fillStyle = 'rgba(255,255,255,0.25)';
-    ctx.beginPath(); ctx.roundRect(x + 120, y + 46, 94, 8, 4); ctx.fill();
-    ctx.fillStyle = '#ffd54f';
-    ctx.beginPath(); ctx.roundRect(x + 120, y + 46, Math.max(2, 94 * a.reloadFrac), 8, 4); ctx.fill();
-    ctx.fillStyle = '#fff';
-    ctx.font = 'bold 11px ui-rounded, system-ui, sans-serif';
-    ctx.fillText('RELOADING', x + 120, y + 38);
+    ctx.fillStyle = C.faint;
+    ctx.fillRect(x + 176, y + 76, 60, 6);
+    ctx.fillStyle = C.warn;
+    ctx.fillRect(x + 176, y + 76, Math.max(2, 60 * a.reloadFrac), 6);
+    ctx.font = font(9);
+    ctx.fillText('RELOAD', x + 176, y + 71);
+  } else if (!touchActive) {
+    ctx.fillStyle = C.dim;
+    ctx.font = font(9);
+    ctx.fillText('[B] SHOP', x + 184, y + 84);
   }
 }
 
-// Health bar, bottom left: green when healthy, amber when hurt, red when low or downed.
+// Health: twenty segments, bottom left (bottom centre on touch).
 function drawHealth() {
   const hp = clamp(curr.me.hp, 0, 100);
-  const x = touchActive ? VW / 2 - 130 : 24, y = VH - 44, w = 260, h = 20;
-  ctx.fillStyle = 'rgba(15,20,35,0.6)';
-  ctx.beginPath(); ctx.roundRect(x - 4, y - 4, w + 8, h + 8, 14); ctx.fill();
-  ctx.fillStyle = curr.me.downed ? '#ff5252' : hp > 60 ? '#5fe07a' : hp > 30 ? '#ffc94a' : '#ff5252';
-  const fill = curr.me.downed ? w * clamp(curr.me.bleed / 20, 0, 1) : w * hp / 100;
-  if (fill > 1) { ctx.beginPath(); ctx.roundRect(x, y, fill, h, 10); ctx.fill(); }
-  ctx.fillStyle = '#fff';
-  ctx.font = 'bold 14px ui-rounded, system-ui, sans-serif';
+  const w = 270, h = 46, x = touchActive ? VW / 2 - w / 2 : 20, y = VH - h - 20;
+  const downed = curr.me.downed;
+  const color = downed ? C.bad : hp > 60 ? C.good : hp > 30 ? C.warn : C.bad;
+  panel(x, y, w, h, 10, downed ? C.bad : C.dim);
   ctx.textAlign = 'left';
-  ctx.fillText(curr.me.downed ? 'DOWNED' : `${Math.round(hp)} HP`, x + 10, y + 15);
+  ctx.fillStyle = color;
+  ctx.font = font(11);
+  ctx.fillText(downed ? 'DOWNED // BLEEDING OUT' : 'VITALS', x + 14, y + 17);
+  ctx.textAlign = 'right';
+  ctx.fillStyle = C.text;
+  ctx.font = font(15, 800);
+  ctx.fillText(downed ? `${Math.ceil(curr.me.bleed)}s` : String(Math.round(hp)), x + w - 12, y + 19);
+  const frac = downed ? clamp(curr.me.bleed / 20, 0, 1) : hp / 100;
+  const segs = 20, sw = (w - 28) / segs;
+  glow(color, 6);
+  for (let i = 0; i < segs; i++) {
+    ctx.fillStyle = i < Math.ceil(frac * segs) ? color : 'rgba(255,255,255,0.08)';
+    if (i >= Math.ceil(frac * segs)) noGlow();
+    ctx.fillRect(x + 14 + i * sw, y + 26, sw - 2.5, 10);
+  }
+  noGlow();
 }
 
-function drawMinimap() {
-  const { x, y, size } = MINIMAP;
-  const k = size / 2000;
+// ---------- Radar and tactical map ----------
+const RADAR = { cx: 98, cy: 98, r: 78, range: 620 };
+const knownObstacles = new Map(); // every building and tree seen so far, for the full map
+let bigMap = false;
+
+function rememberObstacles() {
+  for (const r of curr.obstacles) knownObstacles.set(`${r.x},${r.y}`, r);
+}
+
+// The radar turns with the player: whatever is ahead is at the top.
+function drawRadar(now) {
+  const { cx, cy, r, range } = RADAR;
+  const k = r / range;
+  const fx = Math.cos(yaw), fy = Math.sin(yaw);
+  const toScreen = (wx, wy) => {
+    const dx = wx - curr.me.x, dy = wy - curr.me.y;
+    return [cx + (-dx * fy + dy * fx) * k, cy - (dx * fx + dy * fy) * k];
+  };
   ctx.save();
-  ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
-  ctx.fillRect(x, y, size, size);
-  ctx.beginPath();
-  ctx.rect(x, y, size, size);
-  ctx.clip();
+  ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.clip();
+  const bg = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
+  bg.addColorStop(0, 'rgba(10,36,52,0.82)');
+  bg.addColorStop(1, 'rgba(4,12,24,0.86)');
+  ctx.fillStyle = bg;
+  ctx.fillRect(cx - r, cy - r, r * 2, r * 2);
+  // Range rings and cross lines.
+  ctx.strokeStyle = C.faint;
+  ctx.lineWidth = 1;
+  for (const rr of [r / 3, (2 * r) / 3]) { ctx.beginPath(); ctx.arc(cx, cy, rr, 0, Math.PI * 2); ctx.stroke(); }
+  ctx.beginPath(); ctx.moveTo(cx - r, cy); ctx.lineTo(cx + r, cy); ctx.moveTo(cx, cy - r); ctx.lineTo(cx, cy + r); ctx.stroke();
+  // Sweep line.
+  const sweep = (now / 1400) % (Math.PI * 2);
+  const grad = ctx.createConicGradient(sweep, cx, cy);
+  grad.addColorStop(0, 'rgba(111,243,255,0.22)');
+  grad.addColorStop(0.12, 'rgba(111,243,255,0)');
+  grad.addColorStop(1, 'rgba(111,243,255,0)');
+  ctx.fillStyle = grad;
+  ctx.fillRect(cx - r, cy - r, r * 2, r * 2);
 
-  ctx.strokeStyle = '#fff';
-  ctx.lineWidth = 1.5;
-  ctx.beginPath();
-  ctx.arc(x + curr.zone.x * k, y + curr.zone.y * k, curr.zone.r * k, 0, Math.PI * 2);
-  ctx.stroke();
+  // Safe zone edge.
+  const [zx, zy] = toScreen(curr.zone.x, curr.zone.y);
+  ctx.strokeStyle = C.bad;
+  ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.arc(zx, zy, curr.zone.r * k, 0, Math.PI * 2); ctx.stroke();
 
-  for (const r of curr.obstacles) {
-    ctx.fillStyle = r.k === 'tree' ? '#4caf50' : '#8a8f9c';
-    ctx.fillRect(x + r.x * k, y + r.y * k, Math.max(2, r.w * k), Math.max(2, r.h * k));
+  // Buildings as true shapes, trees as dots.
+  for (const o of curr.obstacles) {
+    if (o.k === 'tree') {
+      const [tx, ty] = toScreen(o.x + o.w / 2, o.y + o.h / 2);
+      ctx.fillStyle = 'rgba(125,255,166,0.55)';
+      ctx.beginPath(); ctx.arc(tx, ty, 2, 0, Math.PI * 2); ctx.fill();
+      continue;
+    }
+    ctx.beginPath();
+    [[o.x, o.y], [o.x + o.w, o.y], [o.x + o.w, o.y + o.h], [o.x, o.y + o.h]].forEach(([wx, wy], i) => {
+      const [sx, sy] = toScreen(wx, wy);
+      if (i) ctx.lineTo(sx, sy); else ctx.moveTo(sx, sy);
+    });
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(111,243,255,0.2)';
+    ctx.fill();
+    ctx.strokeStyle = C.dim;
+    ctx.lineWidth = 1;
+    ctx.stroke();
+  }
+  for (const l of curr.loot) {
+    const [sx, sy] = toScreen(l.x, l.y);
+    ctx.fillStyle = l.k === 'cash' ? C.gold : '#ff8fa3';
+    ctx.fillRect(sx - 1.5, sy - 1.5, 3, 3);
   }
   for (const pg of curr.pings) {
-    ctx.fillStyle = '#ffeb3b';
-    ctx.beginPath(); ctx.arc(x + pg.x * k, y + pg.y * k, 3, 0, Math.PI * 2); ctx.fill();
+    const [sx, sy] = toScreen(pg.x, pg.y);
+    ctx.strokeStyle = C.gold;
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(sx, sy, 4 + (now / 200) % 4, 0, Math.PI * 2); ctx.stroke();
   }
   for (const mate of curr.players) {
     if (mate.team === 0 || mate.team !== curr.me.team) continue;
-    ctx.fillStyle = '#66bb6a';
-    ctx.beginPath(); ctx.arc(x + mate.x * k, y + mate.y * k, 3.5, 0, Math.PI * 2); ctx.fill();
+    const [sx, sy] = toScreen(mate.x, mate.y);
+    ctx.fillStyle = mate.downed ? C.warn : C.good;
+    ctx.beginPath(); ctx.arc(sx, sy, 4, 0, Math.PI * 2); ctx.fill();
   }
   for (const b of curr.revealed) {
-    ctx.fillStyle = '#ff5252';
-    ctx.beginPath(); ctx.arc(x + b.x * k, y + b.y * k, 4, 0, Math.PI * 2); ctx.fill();
-  }
-  if (curr.me.alive) {
-    ctx.fillStyle = '#4fc3f7';
-    ctx.beginPath(); ctx.arc(x + curr.me.x * k, y + curr.me.y * k, 4, 0, Math.PI * 2); ctx.fill();
-    ctx.strokeStyle = '#4fc3f7';
-    ctx.beginPath();
-    ctx.moveTo(x + curr.me.x * k, y + curr.me.y * k);
-    ctx.lineTo(x + (curr.me.x + Math.cos(yaw) * 60) * k, y + (curr.me.y + Math.sin(yaw) * 60) * k);
-    ctx.stroke();
+    const [sx, sy] = toScreen(b.x, b.y);
+    ctx.fillStyle = C.bad;
+    ctx.beginPath(); ctx.moveTo(sx, sy - 5); ctx.lineTo(sx + 5, sy); ctx.lineTo(sx, sy + 5); ctx.lineTo(sx - 5, sy); ctx.fill();
   }
   ctx.restore();
-  ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)';
-  ctx.strokeRect(x, y, size, size);
+
+  // Rim, tick marks, and a north marker that slides around the edge.
+  glow(C.main, 8);
+  ctx.strokeStyle = C.main;
+  ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.stroke();
+  noGlow();
+  ctx.strokeStyle = C.dim;
+  ctx.lineWidth = 1;
+  for (let i = 0; i < 36; i++) {
+    const a = (i / 36) * Math.PI * 2, len = i % 9 === 0 ? 7 : 3;
+    ctx.beginPath();
+    ctx.moveTo(cx + Math.cos(a) * (r + 2), cy + Math.sin(a) * (r + 2));
+    ctx.lineTo(cx + Math.cos(a) * (r + 2 + len), cy + Math.sin(a) * (r + 2 + len));
+    ctx.stroke();
+  }
+  ctx.fillStyle = C.main;
+  ctx.font = font(11, 800);
+  ctx.textAlign = 'center';
+  ctx.fillText('N', cx - fx * (r + 16), cy + fy * (r + 16) + 4);
+  // The player: an arrow at the centre, always pointing up.
+  if (curr.me.alive) {
+    glow(C.main, 8);
+    ctx.fillStyle = C.text;
+    ctx.beginPath(); ctx.moveTo(cx, cy - 7); ctx.lineTo(cx + 5, cy + 5); ctx.lineTo(cx, cy + 2); ctx.lineTo(cx - 5, cy + 5); ctx.fill();
+    noGlow();
+  }
+  // Outside the zone: an arrow on the rim points the way back.
+  const dz = Math.hypot(curr.zone.x - curr.me.x, curr.zone.y - curr.me.y);
+  if (dz > curr.zone.r && curr.me.alive) {
+    const a = Math.atan2(zy - cy, zx - cx);
+    ctx.fillStyle = C.bad;
+    ctx.beginPath();
+    ctx.moveTo(cx + Math.cos(a) * (r - 4), cy + Math.sin(a) * (r - 4));
+    ctx.lineTo(cx + Math.cos(a - 0.16) * (r - 16), cy + Math.sin(a - 0.16) * (r - 16));
+    ctx.lineTo(cx + Math.cos(a + 0.16) * (r - 16), cy + Math.sin(a + 0.16) * (r - 16));
+    ctx.fill();
+    ctx.font = font(10);
+    ctx.fillText('RETURN TO ZONE', cx, cy + r + 30);
+  }
+  ctx.fillStyle = C.dim;
+  ctx.font = font(9);
+  ctx.textAlign = 'center';
+  ctx.fillText(touchActive ? 'TAP FOR MAP' : '[TAB] MAP', cx, cy + r + 18);
+}
+
+// Full map: north up, the whole arena, everything seen so far.
+function bigMapRect() {
+  const size = Math.min(VW, VH) * 0.8;
+  return { x: VW / 2 - size / 2, y: VH / 2 - size / 2 + 10, size };
+}
+function drawBigMap(now) {
+  const { x, y, size } = bigMapRect();
+  const k = size / 2000;
+  panel(x - 14, y - 36, size + 28, size + 50, 16, C.dim, 'rgba(5,14,26,0.92)');
+  ctx.fillStyle = C.main;
+  ctx.font = font(13, 800);
+  ctx.textAlign = 'left';
+  ctx.fillText('TACTICAL MAP', x, y - 14);
+  ctx.fillStyle = C.dim;
+  ctx.font = font(10);
+  ctx.textAlign = 'right';
+  ctx.fillText(touchActive ? 'TAP MAP TO PING // TAP OUTSIDE TO CLOSE' : '[TAB] CLOSE // [Q] PING AHEAD', x + size, y - 14);
+  ctx.save();
+  ctx.beginPath(); ctx.rect(x, y, size, size); ctx.clip();
+  ctx.fillStyle = 'rgba(4,14,26,0.9)';
+  ctx.fillRect(x, y, size, size);
+  ctx.strokeStyle = C.faint;
+  ctx.lineWidth = 1;
+  ctx.font = font(9);
+  ctx.textAlign = 'left';
+  for (let i = 0; i <= 8; i++) {
+    const p = (i / 8) * size;
+    ctx.beginPath(); ctx.moveTo(x + p, y); ctx.lineTo(x + p, y + size); ctx.moveTo(x, y + p); ctx.lineTo(x + size, y + p); ctx.stroke();
+    if (i < 8) { ctx.fillStyle = C.dim; ctx.fillText('ABCDEFGH'[i], x + p + 4, y + 11); ctx.fillText(String(i + 1), x + 4, y + p + 22); }
+  }
+  for (const o of knownObstacles.values()) {
+    if (o.k === 'tree') {
+      ctx.fillStyle = 'rgba(125,255,166,0.5)';
+      ctx.fillRect(x + o.x * k, y + o.y * k, 2.5, 2.5);
+    } else {
+      ctx.fillStyle = 'rgba(111,243,255,0.22)';
+      ctx.fillRect(x + o.x * k, y + o.y * k, o.w * k, o.h * k);
+      ctx.strokeStyle = C.dim;
+      ctx.strokeRect(x + o.x * k, y + o.y * k, o.w * k, o.h * k);
+    }
+  }
+  glow(C.bad, 8);
+  ctx.strokeStyle = C.bad;
+  ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.arc(x + curr.zone.x * k, y + curr.zone.y * k, curr.zone.r * k, 0, Math.PI * 2); ctx.stroke();
+  noGlow();
+  for (const pg of curr.pings) {
+    ctx.strokeStyle = C.gold;
+    ctx.beginPath(); ctx.arc(x + pg.x * k, y + pg.y * k, 5 + (now / 200) % 5, 0, Math.PI * 2); ctx.stroke();
+  }
+  for (const mate of curr.players) {
+    if (mate.team === 0 || mate.team !== curr.me.team) continue;
+    ctx.fillStyle = mate.downed ? C.warn : C.good;
+    ctx.beginPath(); ctx.arc(x + mate.x * k, y + mate.y * k, 5, 0, Math.PI * 2); ctx.fill();
+    ctx.font = font(10);
+    ctx.fillText(mate.name, x + mate.x * k + 8, y + mate.y * k + 4);
+  }
+  for (const b of curr.revealed) {
+    ctx.fillStyle = C.bad;
+    ctx.beginPath(); ctx.arc(x + b.x * k, y + b.y * k, 5, 0, Math.PI * 2); ctx.fill();
+  }
+  // The player: an arrow turned to the facing direction.
+  ctx.translate(x + curr.me.x * k, y + curr.me.y * k);
+  ctx.rotate(yaw + Math.PI / 2);
+  glow(C.main, 10);
+  ctx.fillStyle = C.text;
+  ctx.beginPath(); ctx.moveTo(0, -9); ctx.lineTo(6, 7); ctx.lineTo(0, 3); ctx.lineTo(-6, 7); ctx.fill();
+  noGlow();
+  ctx.restore();
+}
+
+// ---------- Shop ----------
+let shopOpen = false;
+let shopRows = []; // touch targets: { slot, x, y, w, h }
+const WEAPON_NAMES = ['Pistol', 'SMG', 'Rifle', 'Shotgun', 'Sniper'];
+const WEAPON_NOTES = ['semi-auto sidearm', 'fast, close range', 'all-round automatic', '8 pellets, very close', 'one-shot headshots'];
+function drawShop() {
+  const a = curr.ammo;
+  const w = Math.min(460, VW - 24), rowH = 44, h = 86 + rowH * 5;
+  const x = VW / 2 - w / 2, y = Math.max(70, VH / 2 - h / 2);
+  panel(x, y, w, h, 16, C.dim, 'rgba(5,14,26,0.92)');
+  ctx.textAlign = 'left';
+  ctx.fillStyle = C.main;
+  ctx.font = font(15, 800);
+  ctx.fillText('ARMORY', x + 18, y + 28);
+  ctx.textAlign = 'right';
+  ctx.fillStyle = C.gold;
+  ctx.fillText(`CR ${a.credits}`, x + w - 18, y + 28);
+  shopRows = [];
+  for (let i = 0; i < 5; i++) {
+    const ry = y + 42 + i * rowH;
+    const owned = a.owned[i];
+    const price = owned ? a.ammoPrice : a.prices[i];
+    const can = a.credits >= price;
+    ctx.fillStyle = a.slot === i + 1 ? 'rgba(111,243,255,0.16)' : 'rgba(255,255,255,0.04)';
+    ctx.fillRect(x + 12, ry, w - 24, rowH - 6);
+    ctx.textAlign = 'left';
+    ctx.fillStyle = C.main;
+    ctx.font = font(13, 800);
+    ctx.fillText(`[${i + 1}]`, x + 22, ry + 24);
+    ctx.fillStyle = C.text;
+    ctx.fillText(WEAPON_NAMES[i].toUpperCase(), x + 62, ry + 18);
+    ctx.fillStyle = C.dim;
+    ctx.font = font(10);
+    ctx.fillText(WEAPON_NOTES[i], x + 62, ry + 32);
+    ctx.textAlign = 'right';
+    ctx.font = font(12, 800);
+    ctx.fillStyle = owned ? C.good : can ? C.gold : C.bad;
+    ctx.fillText(owned ? `OWNED // AMMO ${price}` : `${price} CR`, x + w - 22, ry + 24);
+    shopRows.push({ slot: i + 1, x: x + 12, y: ry, w: w - 24, h: rowH - 6 });
+  }
+  ctx.textAlign = 'center';
+  ctx.fillStyle = C.dim;
+  ctx.font = font(10);
+  ctx.fillText(touchActive ? 'TAP A ROW TO BUY // TAP OUTSIDE TO CLOSE' : 'PRESS 1-5 TO BUY // [B] CLOSE // KILLS +300 CR',
+    VW / 2, y + h - 14);
 }
 
 function drawButton(b, label, color, alpha) {
   ctx.save();
   ctx.globalAlpha = alpha;
-  ctx.fillStyle = color;
+  ctx.fillStyle = 'rgba(6,16,30,0.75)';
   ctx.beginPath(); ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2); ctx.fill();
-  ctx.globalAlpha = 1;
-  ctx.fillStyle = '#fff';
-  ctx.font = 'bold 13px ui-rounded, system-ui, sans-serif';
+  ctx.globalAlpha = Math.min(1, alpha + 0.4);
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 2.5;
+  ctx.beginPath(); ctx.arc(b.x, b.y, b.r - 2, 0, Math.PI * 2); ctx.stroke();
+  ctx.fillStyle = color;
+  ctx.font = font(b.r > 40 ? 14 : 11, 800);
   ctx.textAlign = 'center';
-  ctx.fillText(label, b.x, b.y + 5);
+  ctx.fillText(label, b.x, b.y + 4);
   ctx.restore();
 }
 
 function drawTouchControls() {
   ctx.save();
-  ctx.globalAlpha = 0.35;
-  ctx.fillStyle = '#000';
-  ctx.beginPath(); ctx.arc(STICK.x, STICK.y, STICK.r, 0, Math.PI * 2); ctx.fill();
-  ctx.fillStyle = '#fff';
+  ctx.strokeStyle = C.dim;
+  ctx.lineWidth = 2;
+  ctx.fillStyle = 'rgba(6,16,30,0.45)';
+  ctx.beginPath(); ctx.arc(STICK.x, STICK.y, STICK.r, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = 'rgba(111,243,255,0.5)';
   ctx.beginPath(); ctx.arc(STICK.x + stick.dx * STICK.r, STICK.y + stick.dy * STICK.r, 26, 0, Math.PI * 2); ctx.fill();
   ctx.restore();
-  drawButton(FIRE, 'FIRE', '#ef5350', fireHeld ? 0.7 : 0.35);
-  drawButton({ x: RELOAD.x, y: RELOAD.y, r: RELOAD.r }, 'R', '#ffb300', 0.45);
-  drawButton({ x: SWAP.x, y: SWAP.y, r: SWAP.r }, 'SWAP', '#7e57c2', 0.45);
-  drawButton(REVIVE_BTN, 'REVIVE', '#26a69a', reviveTouched ? 0.7 : 0.4);
+  drawButton(FIRE, 'FIRE', C.bad, fireHeld ? 0.9 : 0.5);
+  drawButton(RELOAD, 'RELOAD', C.warn, 0.5);
+  drawButton(SWAP, 'SWAP', C.main, 0.5);
+  drawButton(REVIVE_BTN, 'REVIVE', C.good, reviveTouched ? 0.9 : 0.5);
+  drawButton(SHOP_BTN, 'SHOP', C.gold, shopOpen ? 0.9 : 0.5);
+}
+
+function drawFeed() {
+  ctx.textAlign = 'right';
+  ctx.font = font(11);
+  const lines = curr.events.slice(-6);
+  lines.forEach((line, i) => {
+    const w = ctx.measureText(line).width + 20, y = 14 + i * 22;
+    ctx.fillStyle = C.bg;
+    ctx.fillRect(VW - 14 - w, y, w, 18);
+    ctx.fillStyle = line.includes(window.MATCH.name) ? C.gold : C.main;
+    ctx.fillRect(VW - 16, y, 2, 18);
+    ctx.fillStyle = C.text;
+    ctx.fillText(line, VW - 24, y + 13);
+  });
 }
 
 function drawOverlay(now) {
   ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
   ctx.clearRect(0, 0, VW, VH);
   if (!curr) return;
+  rememberObstacles();
 
-  ctx.font = '14px ui-rounded, system-ui, sans-serif';
-  ctx.textAlign = 'right';
-  ctx.fillStyle = '#fff';
-  [`Alive: ${curr.alive}`, ...curr.events].forEach((line, i) => ctx.fillText(line, VW - 10, 20 + i * 18));
-
+  drawFeed();
   if (curr.me.alive) {
-    drawCrosshair(curr.me.bloom);
-    drawHitMarker(now);
+    if (!shopOpen && !bigMap) { drawCrosshair(curr.me.bloom); drawHitMarker(now); }
     drawAmmo();
     drawHealth();
   }
-  drawMinimap();
+  drawCompass();
+  drawRadar(now);
   if (touchActive) drawTouchControls();
+  if (bigMap) drawBigMap(now);
+  if (shopOpen && curr.me.alive) drawShop(); else shopOpen = false;
 
   ctx.textAlign = 'center';
   if (curr.started && curr.me.downed && !curr.over) {
-    ctx.fillStyle = '#ff5252';
-    ctx.font = 'bold 28px ui-rounded, system-ui, sans-serif';
-    ctx.fillText('DOWNED: a teammate can revive you (hold E)', VW / 2, VH / 2 + 60);
+    glow(C.bad, 12);
+    ctx.fillStyle = C.bad;
+    ctx.font = font(22, 800);
+    ctx.fillText('DOWNED // TEAMMATE CAN REVIVE YOU', VW / 2, VH / 2 + 70);
+    noGlow();
   }
-  if (curr.started && !curr.me.alive && !curr.over) {
-    ctx.fillStyle = '#fff';
-    ctx.font = '32px ui-rounded, system-ui, sans-serif';
-    ctx.fillText(`Eliminated — #${curr.me.place}`, VW / 2, VH / 2);
+  if (curr.started && !curr.me.alive && !curr.over && !bigMap) {
+    glow(C.bad, 12);
+    ctx.fillStyle = C.text;
+    ctx.font = font(30, 800);
+    ctx.fillText(`ELIMINATED // #${curr.me.place}`, VW / 2, VH / 2);
+    noGlow();
   }
   if (curr.over) {
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.55)';
-    ctx.fillRect(0, VH / 2 - 70, VW, 150);
-    ctx.fillStyle = '#ffd54f';
-    ctx.font = 'bold 36px ui-rounded, system-ui, sans-serif';
-    ctx.fillText(curr.me.place === 1 ? 'Victory!' : `${curr.winner} wins`, VW / 2, VH / 2);
-    ctx.fillStyle = '#fff';
-    ctx.font = '18px ui-rounded, system-ui, sans-serif';
-    ctx.fillText(`You placed #${curr.me.place} · ${curr.me.kills} eliminations`, VW / 2, VH / 2 + 30);
-    ctx.fillStyle = '#8dffa8';
-    ctx.font = 'bold 20px ui-rounded, system-ui, sans-serif';
-    ctx.fillText(`+${curr.xp} XP`, VW / 2, VH / 2 + 60);
+    ctx.fillStyle = 'rgba(4,12,24,0.78)';
+    ctx.fillRect(0, VH / 2 - 76, VW, 160);
+    ctx.fillStyle = C.main;
+    ctx.fillRect(0, VH / 2 - 76, VW, 2);
+    ctx.fillRect(0, VH / 2 + 82, VW, 2);
+    const won = curr.me.place === 1;
+    glow(won ? C.gold : C.main, 16);
+    ctx.fillStyle = won ? C.gold : C.text;
+    ctx.font = font(38, 800);
+    ctx.fillText(won ? 'VICTORY' : `${curr.winner.toUpperCase()} WINS`, VW / 2, VH / 2 - 8);
+    noGlow();
+    ctx.fillStyle = C.text;
+    ctx.font = font(15);
+    ctx.fillText(`PLACED #${curr.me.place} // ${curr.me.kills} ELIMINATIONS`, VW / 2, VH / 2 + 26);
+    ctx.fillStyle = C.good;
+    ctx.font = font(18, 800);
+    ctx.fillText(`+${curr.xp} XP`, VW / 2, VH / 2 + 58);
   }
 }
 

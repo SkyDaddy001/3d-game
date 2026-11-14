@@ -56,15 +56,39 @@
     </div>
     <div class="actions">
       <button class="go" hx-post="/matches/quick" hx-swap="none">▶ Play · random team</button>
-      <button class="ghost" hx-post="/matches" hx-swap="none">Create private match</button>
     </div>
     <div class="status err" id="form-status"></div>
   </section>
 
   <div class="grid">
     <section class="card">
-      <h2>Open matches</h2>
+      <h2>Open rooms</h2>
       <div hx-get="/matches" hx-trigger="load, every 2s" hx-swap="innerHTML"></div>
+      <form class="row" hx-post="/rooms/join" hx-swap="none">
+        <input name="matchid" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" placeholder="Room number" aria-label="Room number" required>
+        <button type="submit">Join</button>
+      </form>
+    </section>
+    <section class="card">
+      <h2>Custom room</h2>
+      <form hx-post="/matches" hx-swap="none">
+        <div class="fields">
+          <label>Players
+            <select name="size">
+              <option value="2">2</option><option value="4">4</option><option value="8" selected>8</option>
+              <option value="12">12</option><option value="16">16</option>
+            </select>
+          </label>
+          <label>Teams
+            <select name="mode">
+              <option value="">Auto</option><option value="solo">Solo</option><option value="duo">Duos</option>
+            </select>
+          </label>
+        </div>
+        <label class="check"><input type="checkbox" name="bots" value="on" checked> Fill empty spots with bots</label>
+        <label class="check"><input type="checkbox" name="private" value="on"> Private: join by room number or invite only</label>
+        <button type="submit">Create room</button>
+      </form>
     </section>
     <section class="card">
       <h2>Invites</h2>

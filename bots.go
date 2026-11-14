@@ -14,6 +14,7 @@ const (
 	botAimError   = 0.09  // radians of aim wobble (standard deviation)
 	botReact      = 0.6   // seconds an enemy must stay visible before a bot opens fire
 	botReviveSeek = 320.0 // how far a bot will go to revive a teammate
+	botGrace      = 5.0   // seconds after the start before bots open fire, so nobody dies on arrival
 )
 
 // Bot names contain a space, which usertags cannot, so a bot never shares a name with a player.
@@ -117,7 +118,7 @@ func (m *Match) thinkBots(dt float64) {
 			aim := math.Atan2(target.Y-p.Y, target.X-p.X)
 			p.Aim = aim + rand.NormFloat64()*botAimError
 			b.seen += dt
-			if b.seen >= botReact {
+			if b.seen >= botReact && m.elapsed >= botGrace {
 				// Tap the trigger: pressed for part of each cycle, so every weapon type fires.
 				b.trigger += dt
 				if math.Mod(b.trigger, 0.3) < 0.15 || weapons[p.weapon].Auto {
@@ -145,6 +146,7 @@ func (m *Match) thinkBots(dt float64) {
 			if p.mags[p.weapon] < weapons[p.weapon].Mag/2 {
 				p.wantReload = true
 			}
+			p.wantBuy = botPurchase(p)
 			gx, gy, has := m.botGoal(p)
 			if !has {
 				// Roam, changing heading every few seconds.
@@ -216,9 +218,25 @@ func botWeaponFor(p *Player, dist float64) int {
 		order = []int{1, 2, 0}
 	}
 	for _, w := range order {
-		if p.mags[w] > 0 || p.reserves[w] > 0 {
+		if p.owned[w] && (p.mags[w] > 0 || p.reserves[w] > 0) {
 			return w + 1
 		}
 	}
 	return 1
+}
+
+// botPurchase picks what a bot buys when it has a quiet moment: the best weapon it can afford,
+// or ammo once a weapon it owns has run dry. Zero means nothing.
+func botPurchase(p *Player) int {
+	for _, w := range []int{2, 1, 3} { // rifle, then SMG, then shotgun
+		if !p.owned[w] && p.credits >= weapons[w].Price {
+			return w + 1
+		}
+	}
+	for w := range weapons {
+		if p.owned[w] && p.mags[w] == 0 && p.reserves[w] == 0 && p.credits >= ammoPrice {
+			return w + 1
+		}
+	}
+	return 0
 }

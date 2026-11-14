@@ -66,3 +66,8 @@ ul.friends li::before { content: "★ "; color: #f0a500; }
 footer { text-align: center; color: #fff; font-weight: 700; text-shadow: 0 1px 3px rgba(0,0,0,0.35); margin-top: 8px; }
 footer a { color: #fff; }
 article.legal { background: var(--card); border-radius: 22px; padding: 24px; line-height: 1.55; }
+select { font: inherit; font-weight: 700; padding: 10px 12px; border-radius: 14px; border: 2px solid #cfd8ea; background: #fff; width: 100%; margin-top: 4px; }
+.fields { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+label.check { display: flex; align-items: center; gap: 8px; font-weight: 700; margin: 10px 0; }
+label.check input { flex: none; width: 20px; height: 20px; padding: 0; }
+

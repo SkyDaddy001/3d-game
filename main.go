@@ -13,6 +13,7 @@ import (
 	"os"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -50,12 +51,7 @@ type inputMsg struct {
 	Reload bool    `json:"reload"`
 	Switch int     `json:"switch"`
 	Revive bool    `json:"revive"`
-}
-
-type matchRow struct {
-	ID      string
-	Players int
-	Started bool
+	Buy    int     `json:"buy"`
 }
 
 func (s *Server) get(id string) *Match {
@@ -115,10 +111,11 @@ func (s *Server) listMatches(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mu.Unlock()
 
-	rows := make([]matchRow, 0, len(ms))
+	rows := make([]RoomInfo, 0, len(ms))
 	for _, m := range ms {
-		n, started := m.Summary()
-		rows = append(rows, matchRow{ID: m.ID, Players: n, Started: started})
+		if info := m.Info(); !info.Private && !m.Closed() {
+			rows = append(rows, info)
+		}
 	}
 	sort.Slice(rows, func(i, j int) bool { return rows[i].ID < rows[j].ID })
 	s.render(w, "matches.html", rows)
@@ -133,14 +130,62 @@ func requirePlayer(w http.ResponseWriter, r *http.Request) bool {
 	return true
 }
 
+// roomSizes are the sizes a custom room may have.
+var roomSizes = map[int]bool{2: true, 4: true, 8: true, 12: true, 16: true}
+
+// createMatch makes a custom room from the lobby form: size, team mode, bots, and privacy.
+// Missing or invalid fields fall back to the defaults: 8 players, automatic teams, bots on, public.
 func (s *Server) createMatch(w http.ResponseWriter, r *http.Request) {
 	if !requirePlayer(w, r) {
 		return
 	}
+	size := s.botFill
+	if n, err := strconv.Atoi(r.FormValue("size")); err == nil && roomSizes[n] {
+		size = n
+	}
+	if size < 2 {
+		size = defaultBotFill
+	}
+	mode := r.FormValue("mode")
+	if mode != "solo" && mode != "duo" {
+		mode = ""
+	}
+	// The lobby form always sends "size"; with it present, an unticked bots box means no bots.
+	bots := s.botFill > 0 && (r.FormValue("bots") == "on" || r.FormValue("size") == "")
+
 	id := fmt.Sprintf("%06d", rand.Intn(1_000_000))
+	m := s.newMatch(id)
+	m.mu.Lock()
+	m.Max = size
+	m.Mode = mode
+	m.Private = r.FormValue("private") == "on"
+	m.Host = sessionFrom(r).acc.Name
+	m.FillTo = 0
+	if bots {
+		m.FillTo = size
+	}
+	m.mu.Unlock()
 	s.mu.Lock()
-	s.matches[id] = s.newMatch(id)
+	s.matches[id] = m
 	s.mu.Unlock()
+	redirectTo(w, id)
+}
+
+// joinByNumber joins a room from its six-digit number, which is how private rooms are shared.
+func (s *Server) joinByNumber(w http.ResponseWriter, r *http.Request) {
+	if !requirePlayer(w, r) {
+		return
+	}
+	id := strings.TrimSpace(r.FormValue("matchid"))
+	m := s.get(id)
+	if m == nil {
+		http.Error(w, "no room with that number", http.StatusNotFound)
+		return
+	}
+	if info := m.Info(); info.Started || info.Players >= info.Max {
+		http.Error(w, "that room is full or already playing", http.StatusConflict)
+		return
+	}
 	redirectTo(w, id)
 }
 
@@ -150,8 +195,12 @@ func (s *Server) joinMatch(w http.ResponseWriter, r *http.Request) {
 	}
 	id := r.PathValue("id")
 	m := s.get(id)
-	if m == nil || m.Started() {
+	if m == nil {
 		http.Error(w, "match unavailable", http.StatusConflict)
+		return
+	}
+	if info := m.Info(); info.Started || info.Players >= info.Max {
+		http.Error(w, "that room is full or already playing", http.StatusConflict)
 		return
 	}
 	redirectTo(w, id)
@@ -244,6 +293,7 @@ func (s *Server) serveWS(w http.ResponseWriter, r *http.Request) {
 			Reload: in.Reload,
 			Switch: in.Switch,
 			Revive: in.Revive,
+			Buy:    in.Buy,
 		})
 	}
 }
@@ -305,6 +355,7 @@ func newMux(s *Server) (http.Handler, error) {
 	mux.HandleFunc("POST /friends", s.addFriend)
 	mux.HandleFunc("GET /matches", s.listMatches)
 	mux.HandleFunc("POST /matches", s.createMatch)
+	mux.HandleFunc("POST /rooms/join", s.joinByNumber)
 	mux.HandleFunc("GET /matches/{id}", s.matchPage)
 	mux.HandleFunc("POST /matches/{id}/join", s.joinMatch)
 	mux.HandleFunc("POST /matches/{id}/start", s.startMatch)

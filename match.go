@@ -30,6 +30,11 @@ const (
 	shrinkEvery  = 30.0
 	obstacleN    = 40
 	treeN        = 70
+	startCredits = 1000
+	killReward   = 300
+	cashAmount   = 250
+	ammoPrice    = 200  // refills the reserve of a weapon the player already owns
+	cashShare    = 0.35 // fraction of pickups that are cash rather than medkits
 	treeSize     = 10.0 // side of a tree trunk's collision square
 	maxEvents    = 5
 	headRadius   = 5.0 // a shot this close to the center counts as a headshot
@@ -51,6 +56,7 @@ const (
 
 // Weapon describes one weapon type. Players carry one magazine and reserve per weapon.
 type Weapon struct {
+	Price        int // credits to buy; the pistol is free and owned from the start
 	Name         string
 	Mag          int
 	Reserve      int
@@ -67,11 +73,11 @@ type Weapon struct {
 }
 
 var weapons = []Weapon{
-	{Name: "Pistol", Mag: 12, Reserve: 60, Interval: 0.25, ReloadTime: 1.4, Damage: 25, HeadDamage: 100, Pellets: 1, Spread: 0.01, BloomPerShot: 0.04, BloomMax: 0.15, Range: 500},
-	{Name: "SMG", Mag: 30, Reserve: 150, Interval: 0.075, ReloadTime: 1.8, Damage: 18, HeadDamage: 54, Pellets: 1, Spread: 0.02, BloomPerShot: 0.02, BloomMax: 0.22, Range: 400, Auto: true},
-	{Name: "Rifle", Mag: 30, Reserve: 120, Interval: 0.1, ReloadTime: 2.2, Damage: 28, HeadDamage: 84, Pellets: 1, Spread: 0.01, BloomPerShot: 0.03, BloomMax: 0.2, Range: 600, Auto: true},
-	{Name: "Shotgun", Mag: 6, Reserve: 30, Interval: 0.9, ReloadTime: 2.4, Damage: 14, HeadDamage: 40, Pellets: 8, Spread: 0.12, Range: 300},
-	{Name: "Sniper", Mag: 5, Reserve: 20, Interval: 1.2, ReloadTime: 2.8, Damage: 80, HeadDamage: 100, Pellets: 1, Spread: 0, Range: 2000},
+	{Name: "Pistol", Price: 0, Mag: 12, Reserve: 60, Interval: 0.25, ReloadTime: 1.4, Damage: 25, HeadDamage: 100, Pellets: 1, Spread: 0.01, BloomPerShot: 0.04, BloomMax: 0.15, Range: 500},
+	{Name: "SMG", Price: 900, Mag: 30, Reserve: 150, Interval: 0.075, ReloadTime: 1.8, Damage: 18, HeadDamage: 54, Pellets: 1, Spread: 0.02, BloomPerShot: 0.02, BloomMax: 0.22, Range: 400, Auto: true},
+	{Name: "Rifle", Price: 1800, Mag: 30, Reserve: 120, Interval: 0.1, ReloadTime: 2.2, Damage: 28, HeadDamage: 84, Pellets: 1, Spread: 0.01, BloomPerShot: 0.03, BloomMax: 0.2, Range: 600, Auto: true},
+	{Name: "Shotgun", Price: 1100, Mag: 6, Reserve: 30, Interval: 0.9, ReloadTime: 2.4, Damage: 14, HeadDamage: 40, Pellets: 8, Spread: 0.12, Range: 300},
+	{Name: "Sniper", Price: 2600, Mag: 5, Reserve: 20, Interval: 1.2, ReloadTime: 2.8, Damage: 80, HeadDamage: 100, Pellets: 1, Spread: 0, Range: 2000},
 }
 
 type Player struct {
@@ -107,8 +113,11 @@ type Player struct {
 	hurtCool   float64 // seconds since last damage; health recovers when it reaches zero
 	wantRevive bool
 	bot        *botState // set for computer-controlled players; nil for people
-	kills      int       // eliminations credited to this player
-	damage     float64   // total damage dealt to enemies
+	owned      [5]bool   // weapons the player has; the pistol from the start, others bought
+	credits    int
+	wantBuy    int
+	kills      int     // eliminations credited to this player
+	damage     float64 // total damage dealt to enemies
 	send       chan []byte
 }
 
@@ -121,6 +130,7 @@ type Controls struct {
 	Reload      bool
 	Switch      int // 1-based weapon slot, zero for none
 	Revive      bool
+	Buy         int // 1-based weapon slot to buy, or to refill if already owned; zero for none
 }
 
 type Point struct {
@@ -140,6 +150,7 @@ type Loot struct {
 	ID int     `json:"id"`
 	X  float64 `json:"x"`
 	Y  float64 `json:"y"`
+	K  string  `json:"k,omitempty"` // kind: empty for a medkit, "cash" for credits
 }
 
 // Rect is a static obstacle that blocks movement and shots.
@@ -160,6 +171,10 @@ type AmmoView struct {
 	ReloadFrac float64 `json:"reloadFrac"`
 	Auto       bool    `json:"auto"`
 	Range      float64 `json:"range"`
+	Credits    int     `json:"credits"`
+	Owned      []bool  `json:"owned"`  // one entry per weapon slot
+	Prices     []int   `json:"prices"` // weapon prices, by slot
+	AmmoPrice  int     `json:"ammoPrice"`
 }
 
 type PlayerView struct {
@@ -228,6 +243,12 @@ type Match struct {
 	OnEnd func([]PlayerResult)
 	// FillTo is the room size: when the match starts, bots join until it holds this many players.
 	FillTo int
+	// Room settings, chosen by whoever created the room.
+	Max     int     // most players allowed; zero means the server limit
+	Mode    string  // "solo", "duo", or empty: duos once there are four or more players
+	Private bool    // hidden from the room list and from quick play; joined by number or invite
+	Host    string  // usertag of the creator
+	elapsed float64 // seconds of play since the match started
 }
 
 // PlayerResult is one player's outcome, reported when the match ends.
@@ -280,7 +301,11 @@ func (m *Match) newID() int {
 // addLoot must be called with m.mu held (or before the match is shared).
 func (m *Match) addLoot() {
 	id := m.newID()
-	m.loot[id] = &Loot{ID: id, X: rand.Float64() * worldSize, Y: rand.Float64() * worldSize}
+	l := &Loot{ID: id, X: rand.Float64() * worldSize, Y: rand.Float64() * worldSize}
+	if rand.Float64() < cashShare {
+		l.K = "cash"
+	}
+	m.loot[id] = l
 }
 
 // blocked reports whether a player centered at (x, y) would overlap an obstacle.
@@ -326,13 +351,15 @@ func (m *Match) eliminate(p *Player, by string, killer *Player, headshot bool) {
 	if killer != nil {
 		killer.revealLeft = bountyTime
 		killer.kills++
+		killer.ensureAmmo()
+		killer.credits += killReward
 	}
 }
 
 func (m *Match) Join(name string) (*Player, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.started || m.over || len(m.players) >= maxPlayers {
+	if m.started || m.over || len(m.players) >= m.capacity() {
 		return nil, false
 	}
 	x, y := m.spawnPoint()
@@ -355,6 +382,12 @@ func (m *Match) assignTeams() {
 	}
 	sort.Ints(ids)
 	duos := len(ids) >= minDuos
+	switch m.Mode {
+	case "solo":
+		duos = false
+	case "duo":
+		duos = len(ids) >= 3 // two players in one team would end the match at once
+	}
 	for i, id := range ids {
 		if duos {
 			m.players[id].Team = i/2 + 1
@@ -409,6 +442,9 @@ func (m *Match) Input(p *Player, c Controls) {
 	if c.Switch > 0 {
 		p.switchTo = c.Switch
 	}
+	if c.Buy > 0 {
+		p.wantBuy = c.Buy
+	}
 }
 
 func (m *Match) Start() bool {
@@ -430,6 +466,42 @@ func (m *Match) Started() bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.started
+}
+
+// capacity is the most players the room takes. The caller must hold m.mu.
+func (m *Match) capacity() int {
+	if m.Max > 0 && m.Max < maxPlayers {
+		return m.Max
+	}
+	return maxPlayers
+}
+
+// RoomInfo describes a room for the lobby list.
+type RoomInfo struct {
+	ID      string
+	Host    string
+	Players int
+	Max     int
+	Mode    string
+	Bots    bool
+	Private bool
+	Started bool
+}
+
+// Info returns the room's settings and how full it is.
+func (m *Match) Info() RoomInfo {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	people := 0
+	for _, p := range m.players {
+		if p.bot == nil && !p.gone {
+			people++
+		}
+	}
+	return RoomInfo{
+		ID: m.ID, Host: m.Host, Players: people, Max: m.capacity(), Mode: m.Mode,
+		Bots: m.FillTo > 0, Private: m.Private, Started: m.started,
+	}
 }
 
 func (m *Match) Summary() (int, bool) {
@@ -498,6 +570,7 @@ func (m *Match) step(dt float64) {
 		m.shrinkZone()
 		m.zoneLeft = shrinkEvery
 	}
+	m.elapsed += dt
 	m.thinkBots(dt)
 
 	for _, p := range m.players {
@@ -670,11 +743,53 @@ func (p *Player) ensureAmmo() {
 		return
 	}
 	p.armed = true
-	for i, w := range weapons {
-		p.mags[i] = w.Mag
-		p.reserves[i] = w.Reserve
+	p.credits = startCredits
+	// Everyone starts with the pistol. A player created already holding another weapon owns it too.
+	for _, i := range []int{0, p.weapon} {
+		p.owned[i] = true
+		p.mags[i] = weapons[i].Mag
+		p.reserves[i] = weapons[i].Reserve
 	}
 }
+
+// buy handles a purchase for weapon slot (1-based). An unowned weapon is bought, loaded, and
+// drawn. An owned one has its reserve ammo refilled for ammoPrice. It reports whether credits
+// were spent.
+func (p *Player) buy(slot int) bool {
+	p.ensureAmmo()
+	i := slot - 1
+	if i < 0 || i >= len(weapons) {
+		return false
+	}
+	w := weapons[i]
+	if p.owned[i] {
+		if p.reserves[i] >= w.Reserve || p.credits < ammoPrice {
+			return false
+		}
+		p.credits -= ammoPrice
+		p.reserves[i] = w.Reserve
+		return true
+	}
+	if p.credits < w.Price {
+		return false
+	}
+	p.credits -= w.Price
+	p.owned[i] = true
+	p.mags[i] = w.Mag
+	p.reserves[i] = w.Reserve
+	p.weapon = i
+	p.reloadLeft = 0
+	return true
+}
+
+// weaponPrices lists each weapon's price by slot, for the shop menu.
+var weaponPrices = func() []int {
+	out := make([]int, len(weapons))
+	for i, w := range weapons {
+		out[i] = w.Price
+	}
+	return out
+}()
 
 func (p *Player) ammoView() AmmoView {
 	p.ensureAmmo()
@@ -686,13 +801,18 @@ func (p *Player) ammoView() AmmoView {
 	return AmmoView{
 		Weapon: w.Name, Slot: p.weapon + 1, Mag: p.mags[p.weapon], Reserve: p.reserves[p.weapon],
 		Reloading: p.reloadLeft > 0, ReloadFrac: frac, Auto: w.Auto, Range: w.Range,
+		Credits: p.credits, Owned: p.owned[:], Prices: weaponPrices, AmmoPrice: ammoPrice,
 	}
 }
 
 // updateWeapon handles switching, reloading, and firing for one player and one tick.
 func (m *Match) updateWeapon(p *Player, dt float64) {
 	p.ensureAmmo()
-	if p.switchTo > 0 && p.switchTo <= len(weapons) && p.switchTo-1 != p.weapon {
+	if p.wantBuy > 0 {
+		p.buy(p.wantBuy)
+		p.wantBuy = 0
+	}
+	if p.switchTo > 0 && p.switchTo <= len(weapons) && p.switchTo-1 != p.weapon && p.owned[p.switchTo-1] {
 		p.weapon = p.switchTo - 1
 		p.reloadLeft = 0
 	}
@@ -778,7 +898,8 @@ func (m *Match) shootRay(p *Player, angle, reach, dmg, headDmg float64) (bool, b
 		perp := math.Abs(vx*dy - vy*dx)
 		if perp <= playerRadius {
 			target, best = q, t
-			targetHead = perp <= headRadius
+			// Bots never score headshots: an instant kill from a computer feels unfair.
+			targetHead = perp <= headRadius && p.bot == nil
 		}
 	}
 	if target == nil {
@@ -862,17 +983,23 @@ func (m *Match) updateRevives(dt float64) {
 	}
 }
 
+// tryPickup collects loot the player is standing on: cash always, a medkit only when hurt.
 func (m *Match) tryPickup(p *Player) {
-	if p.HP >= 100 {
-		return
-	}
 	for id, l := range m.loot {
-		if math.Hypot(p.X-l.X, p.Y-l.Y) < pickupRange {
-			p.HP = math.Min(100, p.HP+healAmount)
-			delete(m.loot, id)
-			m.addLoot()
-			return
+		if math.Hypot(p.X-l.X, p.Y-l.Y) >= pickupRange {
+			continue
 		}
+		if l.K == "cash" {
+			p.ensureAmmo()
+			p.credits += cashAmount
+		} else if p.HP < 100 {
+			p.HP = math.Min(100, p.HP+healAmount)
+		} else {
+			continue
+		}
+		delete(m.loot, id)
+		m.addLoot()
+		return
 	}
 }
 

@@ -1,8 +1,9 @@
 {{range .}}
 <div class="row-item">
-  <span>Match {{.ID}} <span class="small">· {{.Players}} players</span></span>
+  <span>Room {{.ID}}{{if .Host}} <span class="small">· {{.Host}}</span>{{end}}<br>
+    <span class="small">{{.Players}}/{{.Max}} players · {{if eq .Mode "solo"}}Solo{{else if eq .Mode "duo"}}Duos{{else}}Auto teams{{end}}{{if .Bots}} · bots fill{{end}}</span></span>
   {{if .Started}}<span class="pill live">In progress</span>{{else}}<span><span class="pill open">Open</span> <button hx-post="/matches/{{.ID}}/join" hx-swap="none">Join</button></span>{{end}}
 </div>
 {{else}}
-<p class="empty">No matches yet. Press Play to start one.</p>
+<p class="empty">No open rooms. Press Play, or create one.</p>
 {{end}}

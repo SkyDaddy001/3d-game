@@ -133,12 +133,37 @@ their profile. The lobby shows level, XP progress, matches, wins, and kills. Lev
 
 - When a match starts, bots join until the room holds 8 players, so one real player can play
   alone. Set `ARENA_BOT_FILL` to change the room size, or to `0` to turn bots off.
-- Bots follow the same rules as people: the same weapons, spread, reloads, line of sight, and
-  zone damage. They roam, fight what they can see, pick up medkits when hurt, stay in the zone,
+- Bots use the same weapons, spread, reloads, line of sight, and zone damage as people, with two
+  handicaps: they hold fire for the first five seconds of a match, and they never score headshots. They roam, fight what they can see, pick up medkits when hurt, stay in the zone,
   and revive a downed teammate nearby.
 - Bot names contain a space ("Bot Luna"), which usertags cannot, so they never clash.
 - Bots earn no XP and are not saved. A room with only bots left closes.
 - A player with no teammate standing is eliminated on a lethal hit instead of being downed.
 
 Playing still needs the server: there is no offline mode.
+
+## Shop
+
+- Everyone starts with the pistol and 1,000 credits. An elimination pays 300; gold coins on the
+  map pay 250.
+- Press **B** (or the SHOP button on touch) to open the armory anywhere, then **1–5** or a tap to
+  buy: SMG 900, Shotgun 1,100, Rifle 1,800, Sniper 2,600. Buying an owned weapon refills its
+  reserve ammo for 200.
+- Only owned weapons can be selected. Bots buy weapons as they can afford them.
+
+## Custom rooms
+
+- The lobby's Custom room form sets the room size (2, 4, 8, 12, or 16), the team mode (auto,
+  solo, or duos), whether bots fill empty spots, and whether the room is private.
+- Private rooms are left out of the room list and quick play. Share the six-digit room number, or
+  invite a friend.
+- Play (random team) joins the first open public room, or creates one.
+
+## HUD and map
+
+- Sci-fi HUD: compass strip, segmented health, ammo panel with weapon slots and credits, and a
+  kill feed.
+- The radar turns with the player and shows nearby buildings, trees, pickups, teammates, pings,
+  and the zone edge. **Tab** or **N** (or a tap on the radar) opens the full map of everything
+  seen so far; on touch, tap the map to ping.
 

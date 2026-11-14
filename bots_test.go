@@ -61,11 +61,17 @@ func TestBotFightsVisibleEnemy(t *testing.T) {
 	enemy := &Player{ID: 2, Name: "e", Team: 2, X: 650, Y: 500, Alive: true, HP: 100}
 	m.players[1], m.players[2] = bot, enemy
 
-	for i := 0; i < 30*6 && enemy.Alive && enemy.HP == 100; i++ {
+	for i := 0; i < 30*4; i++ {
+		m.step(1.0 / 30)
+	}
+	if enemy.HP != 100 {
+		t.Fatal("bots should hold fire during the opening grace period")
+	}
+	for i := 0; i < 30*8 && enemy.Alive && enemy.HP == 100; i++ {
 		m.step(1.0 / 30)
 	}
 	if enemy.HP == 100 {
-		t.Fatal("the bot never hit a visible enemy 150 units away in six seconds")
+		t.Fatal("the bot never hit a visible enemy after the grace period")
 	}
 }
 
@@ -165,5 +171,17 @@ func TestBotMatchReachesAWinner(t *testing.T) {
 	}
 	if !m.over {
 		t.Fatalf("bot match still running after 15 simulated minutes, %d alive", m.countAlive())
+	}
+}
+
+// A bot's shot through the head counts as a body shot, never an instant kill.
+func TestBotsCannotHeadshot(t *testing.T) {
+	m := &Match{players: map[int]*Player{}}
+	bot := &Player{ID: 1, Name: "Bot A", Team: 1, X: 0, Y: 50, Alive: true, HP: 100, Aim: 0, bot: &botState{}}
+	target := &Player{ID: 2, Name: "b", Team: 2, X: 100, Y: 50, Alive: true, HP: 100}
+	m.players[1], m.players[2] = bot, target
+	m.fire(bot)
+	if target.HP != 100-weapons[0].Damage {
+		t.Fatalf("bot shot dead centre: HP %v, want a body shot", target.HP)
 	}
 }

@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"sort"
+	"strconv"
 	"sync"
 	"time"
 
@@ -31,7 +32,11 @@ type Server struct {
 	store   *Store
 	mailer  Mailer
 	invites map[string][]invite // lowercase usertag -> pending invites
+	botFill int                 // room size that bots fill up to when a match starts; 0 for no bots
 }
+
+// defaultBotFill is the room size bots fill up to unless ARENA_BOT_FILL says otherwise.
+const defaultBotFill = 8
 
 type inputMsg struct {
 	T      string  `json:"t"`
@@ -159,7 +164,7 @@ func (s *Server) startMatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !m.Start() {
-		http.Error(w, "need at least 2 players", http.StatusConflict)
+		http.Error(w, "the match has already started or has no players", http.StatusConflict)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -247,6 +252,7 @@ func (s *Server) serveWS(w http.ResponseWriter, r *http.Request) {
 func (s *Server) newMatch(id string) *Match {
 	m := NewMatch(id)
 	m.mu.Lock()
+	m.FillTo = s.botFill
 	m.OnEnd = func(results []PlayerResult) {
 		for _, r := range results {
 			err := s.store.RecordMatch(r.Name, MatchResult{
@@ -277,7 +283,7 @@ func newServer(storePath string, mailer Mailer) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Server{matches: map[string]*Match{}, tmpl: tmpl, store: store, mailer: mailer, invites: map[string][]invite{}}, nil
+	return &Server{matches: map[string]*Match{}, tmpl: tmpl, store: store, mailer: mailer, invites: map[string][]invite{}, botFill: defaultBotFill}, nil
 }
 
 func newMux(s *Server) (http.Handler, error) {
@@ -315,6 +321,13 @@ func main() {
 	s, err := newServer(dataPath, mailerFromEnv())
 	if err != nil {
 		log.Fatal(err)
+	}
+	if v := os.Getenv("ARENA_BOT_FILL"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 0 || n > maxPlayers {
+			log.Fatalf("ARENA_BOT_FILL must be a number from 0 to %d", maxPlayers)
+		}
+		s.botFill = n
 	}
 	mux, err := newMux(s)
 	if err != nil {

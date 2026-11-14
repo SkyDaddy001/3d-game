@@ -861,7 +861,7 @@ ws.onmessage = e => {
 
   startBtn.hidden = msg.started;
   backLink.hidden = !msg.over;
-  if (!msg.started) hud.textContent = `Waiting for players (${msg.alive}), need 2+ to start`;
+  if (!msg.started) hud.textContent = `${msg.alive} in the room · press Start, bots fill the empty spots`;
   else if (msg.over) hud.textContent = msg.me.place === 1 ? 'Victory!' : `Winner: ${msg.winner}`;
   else if (msg.me.downed) hud.textContent = `DOWNED · bleeding out ${Math.ceil(msg.me.bleed)}s · teammate: hold E`;
   else if (msg.me.alive) hud.textContent = `Alive: ${msg.alive} · HP ${Math.round(msg.me.hp)}`;

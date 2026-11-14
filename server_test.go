@@ -51,6 +51,7 @@ func newTestServer(t *testing.T) (*httptest.Server, *Server) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	s.botFill = 0 // these tests count real players; bots have their own tests
 	mux, err := newMux(s)
 	if err != nil {
 		t.Fatal(err)

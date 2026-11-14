@@ -129,3 +129,16 @@ Production notes: serve over HTTPS and add `Secure` to the cookie, and do not us
 When a match ends, each player's kills, placement, and damage are turned into XP and saved to
 their profile. The lobby shows level, XP progress, matches, wins, and kills. Levels are cosmetic.
 
+## Bots
+
+- When a match starts, bots join until the room holds 8 players, so one real player can play
+  alone. Set `ARENA_BOT_FILL` to change the room size, or to `0` to turn bots off.
+- Bots follow the same rules as people: the same weapons, spread, reloads, line of sight, and
+  zone damage. They roam, fight what they can see, pick up medkits when hurt, stay in the zone,
+  and revive a downed teammate nearby.
+- Bot names contain a space ("Bot Luna"), which usertags cannot, so they never clash.
+- Bots earn no XP and are not saved. A room with only bots left closes.
+- A player with no teammate standing is eliminated on a lethal hit instead of being downed.
+
+Playing still needs the server: there is no offline mode.
+

@@ -105,8 +105,7 @@ func TestMatchEndReportsResults(t *testing.T) {
 	target := &Player{ID: 2, Name: "b", Team: 2, X: 100, Y: 50, Alive: true, HP: 100}
 	m.players[1], m.players[2] = shooter, target
 
-	m.fire(shooter) // headshot downs
-	m.fire(shooter) // second hit eliminates
+	m.fire(shooter) // a headshot; the target has no teammate, so it eliminates
 	m.checkWinner()
 	m.checkWinner() // a second call must not report again
 

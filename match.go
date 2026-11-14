@@ -106,8 +106,9 @@ type Player struct {
 	reviveProg float64 // seconds of revive progress from a nearby teammate
 	hurtCool   float64 // seconds since last damage; health recovers when it reaches zero
 	wantRevive bool
-	kills      int     // eliminations credited to this player
-	damage     float64 // total damage dealt to enemies
+	bot        *botState // set for computer-controlled players; nil for people
+	kills      int       // eliminations credited to this player
+	damage     float64   // total damage dealt to enemies
 	send       chan []byte
 }
 
@@ -225,6 +226,8 @@ type Match struct {
 	closed    bool      // set when the match stops; the server removes closed matches
 	// OnEnd, if set, is called once with every player's result when the match is decided.
 	OnEnd func([]PlayerResult)
+	// FillTo is the room size: when the match starts, bots join until it holds this many players.
+	FillTo int
 }
 
 // PlayerResult is one player's outcome, reported when the match ends.
@@ -411,7 +414,11 @@ func (m *Match) Input(p *Player, c Controls) {
 func (m *Match) Start() bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.started || len(m.players) < 2 {
+	if m.started || len(m.players) == 0 {
+		return false
+	}
+	m.addBotsLocked(m.FillTo)
+	if len(m.players) < 2 {
 		return false
 	}
 	m.assignTeams()
@@ -461,7 +468,7 @@ func (m *Match) tick(dt float64) bool {
 func (m *Match) trackIdle() {
 	connected := 0
 	for _, p := range m.players {
-		if !p.gone {
+		if !p.gone && p.bot == nil {
 			connected++
 		}
 	}
@@ -491,6 +498,7 @@ func (m *Match) step(dt float64) {
 		m.shrinkZone()
 		m.zoneLeft = shrinkEvery
 	}
+	m.thinkBots(dt)
 
 	for _, p := range m.players {
 		if !p.Alive {
@@ -505,6 +513,8 @@ func (m *Match) step(dt float64) {
 				m.eliminate(p, "the zone", nil, false)
 			} else if p.bleed <= 0 {
 				m.eliminate(p, "bleeding out", nil, false)
+			} else if !m.canBeRevived(p) {
+				m.eliminate(p, "a team wipe", nil, false)
 			}
 			continue
 		}
@@ -593,6 +603,9 @@ func (m *Match) checkWinner() {
 	if m.OnEnd != nil {
 		results := make([]PlayerResult, 0, len(m.players))
 		for _, p := range m.players {
+			if p.bot != nil {
+				continue
+			}
 			results = append(results, PlayerResult{
 				Name: p.Name, Kills: p.kills, Place: p.Place, Damage: int(p.damage), Won: p.Place == 1,
 			})
@@ -787,7 +800,7 @@ func (m *Match) shootRay(p *Player, angle, reach, dmg, headDmg float64) (bool, b
 // knockDown drops a player when their HP runs out. A teammate can revive them within downedTime.
 // A second lethal hit while downed eliminates them.
 func (m *Match) knockDown(target, killer *Player, headshot bool) {
-	if target.downed {
+	if target.downed || !m.canBeRevived(target) {
 		m.eliminate(target, killer.Name, killer, headshot)
 		return
 	}
@@ -796,6 +809,20 @@ func (m *Match) knockDown(target, killer *Player, headshot bool) {
 	target.bleed = downedTime
 	target.reviveProg = 0
 	m.logEvent(fmt.Sprintf("%s downed by %s", target.Name, killer.Name))
+}
+
+// canBeRevived reports whether a player has a teammate still standing. Without one, being downed
+// would only delay the elimination, so the player is eliminated at once.
+func (m *Match) canBeRevived(p *Player) bool {
+	if p.Team == 0 {
+		return false
+	}
+	for _, q := range m.players {
+		if q != p && q.Team == p.Team && q.Alive && !q.downed {
+			return true
+		}
+	}
+	return false
 }
 
 // updateRevives advances revives. A living teammate who is holding revive within reviveRange for
@@ -869,7 +896,7 @@ func (m *Match) broadcast() {
 	z := Zone{X: m.zoneX, Y: m.zoneY, R: m.zoneR}
 
 	for _, me := range m.players {
-		if me.gone {
+		if me.gone || me.bot != nil {
 			continue
 		}
 		snap := Snapshot{

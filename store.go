@@ -47,6 +47,9 @@ type Account struct {
 	Wins         int      `json:"wins"`
 	Kills        int      `json:"kills"`
 	Created      int64    `json:"created"`
+	Trophies     int      `json:"trophies"`
+	DailyDay     int64    `json:"daily_day,omitempty"` // UTC day number of the last daily reward
+	Look         Look     `json:"look"`
 }
 
 // Store holds all accounts. Methods return copies, so callers never share state with it.
@@ -203,14 +206,16 @@ func (s *Store) RecordMatch(name string, r MatchResult) error {
 	if r.Won {
 		a.Wins++
 	}
+	a.Trophies = max(0, a.Trophies+r.Trophies)
 	return s.saveLocked()
 }
 
 // MatchResult is one player's outcome for a finished match.
 type MatchResult struct {
-	XP    int
-	Kills int
-	Won   bool
+	XP       int
+	Kills    int
+	Won      bool
+	Trophies int // change in trophies; may be negative
 }
 
 // LevelFor returns the level for a total XP amount. Level L starts at 100*(L-1)^2 XP,

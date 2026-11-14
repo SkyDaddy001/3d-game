@@ -53,7 +53,8 @@ func (m *Match) addBotsLocked(size int) {
 		id := m.newID()
 		m.players[id] = &Player{
 			ID: id, Name: name, HP: 100, Alive: true, X: x, Y: y,
-			bot: &botState{strafeDir: 1, wanderA: rand.Float64() * 2 * math.Pi, lastX: x, lastY: y},
+			look: Look{Custom: true, Hair: rand.Intn(len(hairOptions)), Skin: rand.Intn(len(skinOptions)), Shirt: rand.Intn(5), Hat: rand.Intn(2)}.Code(),
+			bot:  &botState{strafeDir: 1, wanderA: rand.Float64() * 2 * math.Pi, lastX: x, lastY: y},
 		}
 	}
 }

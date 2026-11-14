@@ -36,6 +36,9 @@ const (
 	ammoPrice    = 200  // refills the reserve of a weapon the player already owns
 	cashShare    = 0.35 // fraction of pickups that are cash rather than medkits
 	treeSize     = 10.0 // side of a tree trunk's collision square
+	crateN       = 45
+	crateSize    = 18.0
+	crateHP      = 60.0
 	maxEvents    = 5
 	headRadius   = 5.0 // a shot this close to the center counts as a headshot
 	headDamage   = 100.0
@@ -115,6 +118,7 @@ type Player struct {
 	bot        *botState // set for computer-controlled players; nil for people
 	owned      [5]bool   // weapons the player has; the pistol from the start, others bought
 	credits    int
+	look       string // avatar look code shown to other players
 	wantBuy    int
 	kills      int     // eliminations credited to this player
 	damage     float64 // total damage dealt to enemies
@@ -159,7 +163,9 @@ type Rect struct {
 	Y float64 `json:"y"`
 	W float64 `json:"w"`
 	H float64 `json:"h"`
-	K string  `json:"k,omitempty"` // kind: empty for a building, "tree" for a tree trunk
+	K string  `json:"k,omitempty"` // kind: empty for a building, "tree" for a tree trunk, "crate" for a breakable crate
+	// HP is a crate's remaining strength. Buildings and trees cannot be damaged.
+	HP float64 `json:"-"`
 }
 
 type AmmoView struct {
@@ -191,6 +197,7 @@ type PlayerView struct {
 	Downed bool    `json:"downed"`
 	Aim    float64 `json:"aim"`
 	Kills  int     `json:"kills"`
+	Look   string  `json:"look,omitempty"` // avatar look code; empty for the default look
 	Bleed  float64 `json:"bleed"`
 }
 
@@ -217,7 +224,9 @@ type Snapshot struct {
 	HitSeq    int          `json:"hitSeq"`
 	HitKind   string       `json:"hitKind"`
 	Ammo      AmmoView     `json:"ammo"`
-	XP        int          `json:"xp"` // experience earned this match; set once the match is over
+	XP        int          `json:"xp"`       // experience earned this match; set once the match is over
+	Trophies  int          `json:"trophies"` // trophy change this match; set once a ranked match is over
+	Ranked    bool         `json:"ranked"`
 }
 
 type Match struct {
@@ -248,16 +257,18 @@ type Match struct {
 	Mode    string  // "solo", "duo", or empty: duos once there are four or more players
 	Private bool    // hidden from the room list and from quick play; joined by number or invite
 	Host    string  // usertag of the creator
+	Ranked  bool    // results change trophies; set for public rooms
 	elapsed float64 // seconds of play since the match started
 }
 
 // PlayerResult is one player's outcome, reported when the match ends.
 type PlayerResult struct {
-	Name   string
-	Kills  int
-	Place  int
-	Damage int
-	Won    bool
+	Name    string
+	Kills   int
+	Place   int
+	Damage  int
+	Won     bool
+	Players int // how many players, bots included, the match had
 }
 
 func NewMatch(id string) *Match {
@@ -284,6 +295,13 @@ func NewMatch(id string) *Match {
 		t := Rect{X: rand.Float64() * (worldSize - treeSize), Y: rand.Float64() * (worldSize - treeSize), W: treeSize, H: treeSize, K: "tree"}
 		if !m.blocked(t.X+treeSize/2, t.Y+treeSize/2) {
 			m.obstacles = append(m.obstacles, t)
+		}
+	}
+	// Crates are solid cover that can be shot apart; each one drops a pickup when it breaks.
+	for i := 0; i < crateN; i++ {
+		c := Rect{X: rand.Float64() * (worldSize - crateSize), Y: rand.Float64() * (worldSize - crateSize), W: crateSize, H: crateSize, K: "crate", HP: crateHP}
+		if !m.blocked(c.X+crateSize/2, c.Y+crateSize/2) {
+			m.obstacles = append(m.obstacles, c)
 		}
 	}
 	for i := 0; i < 80; i++ {
@@ -466,6 +484,20 @@ func (m *Match) Started() bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.started
+}
+
+// IsRanked reports whether this match changes trophies.
+func (m *Match) IsRanked() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.Ranked
+}
+
+// SetLook sets the avatar look other players see for p.
+func (m *Match) SetLook(p *Player, code string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	p.look = code
 }
 
 // capacity is the most players the room takes. The caller must hold m.mu.
@@ -680,7 +712,7 @@ func (m *Match) checkWinner() {
 				continue
 			}
 			results = append(results, PlayerResult{
-				Name: p.Name, Kills: p.kills, Place: p.Place, Damage: int(p.damage), Won: p.Place == 1,
+				Name: p.Name, Kills: p.kills, Place: p.Place, Damage: int(p.damage), Won: p.Place == 1, Players: len(m.players),
 			})
 		}
 		go m.OnEnd(results)
@@ -876,10 +908,10 @@ func (m *Match) fire(p *Player) {
 // enemy in line takes damage. It reports whether a player was hit and whether it was a headshot.
 func (m *Match) shootRay(p *Player, angle, reach, dmg, headDmg float64) (bool, bool) {
 	dx, dy := math.Cos(angle), math.Sin(angle)
-	wall := reach
-	for _, r := range m.obstacles {
+	wall, wallAt := reach, -1
+	for i, r := range m.obstacles {
 		if t, ok := rayRect(p.X, p.Y, dx, dy, r); ok && t < wall {
-			wall = t
+			wall, wallAt = t, i
 		}
 	}
 
@@ -903,6 +935,11 @@ func (m *Match) shootRay(p *Player, angle, reach, dmg, headDmg float64) (bool, b
 		}
 	}
 	if target == nil {
+		// Nothing alive in the way: the shot lands on whatever stopped it. A crate takes damage.
+		if wallAt >= 0 && m.obstacles[wallAt].K == "crate" {
+			m.damageCrate(wallAt, dmg)
+			return true, false
+		}
 		return false, false
 	}
 	d := dmg
@@ -916,6 +953,22 @@ func (m *Match) shootRay(p *Player, angle, reach, dmg, headDmg float64) (bool, b
 		m.knockDown(target, p, targetHead)
 	}
 	return true, targetHead
+}
+
+// damageCrate wears a crate down. When it breaks it is removed and leaves a pickup behind.
+func (m *Match) damageCrate(i int, dmg float64) {
+	c := &m.obstacles[i]
+	c.HP -= dmg
+	if c.HP > 0 {
+		return
+	}
+	id := m.newID()
+	l := &Loot{ID: id, X: c.X + c.W/2, Y: c.Y + c.H/2}
+	if rand.Float64() < 0.6 {
+		l.K = "cash"
+	}
+	m.loot[id] = l
+	m.obstacles = append(m.obstacles[:i], m.obstacles[i+1:]...)
 }
 
 // knockDown drops a player when their HP runs out. A teammate can revive them within downedTime.
@@ -1008,7 +1061,7 @@ func (p *Player) view() PlayerView {
 		Weapon: weapons[p.weapon].Name,
 		ID:     p.ID, Name: p.Name, Team: p.Team, X: p.X, Y: p.Y,
 		HP: p.HP, Alive: p.Alive, Place: p.Place, Bloom: p.bloom,
-		Downed: p.downed, Bleed: p.bleed, Aim: p.Aim, Kills: p.kills,
+		Downed: p.downed, Bleed: p.bleed, Aim: p.Aim, Kills: p.kills, Look: p.look,
 	}
 }
 
@@ -1032,9 +1085,13 @@ func (m *Match) broadcast() {
 			Players: []PlayerView{}, Loot: []Loot{}, Obstacles: []Rect{},
 			Events: append([]string{}, m.events...), Revealed: []PlayerView{},
 			Pings: []Ping{}, HitSeq: me.hitSeq, HitKind: me.hitKind, Ammo: me.ammoView(),
+			Ranked: m.Ranked,
 		}
 		if m.over {
 			snap.XP = ComputeXP(me.kills, me.Place, int(me.damage))
+			if m.Ranked {
+				snap.Trophies = ComputeTrophies(me.Place, me.kills, len(m.players))
+			}
 		}
 		for _, q := range m.players {
 			if q == me || !q.Alive {

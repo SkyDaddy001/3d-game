@@ -167,3 +167,20 @@ Playing still needs the server: there is no offline mode.
   and the zone edge. **Tab** or **N** (or a tap on the radar) opens the full map of everything
   seen so far; on touch, tap the map to ping.
 
+## Progress and identity
+
+- **Play again:** once you are out or the match ends, one button joins the next public room.
+- **Trophies:** public rooms are ranked. A win is +30, second +18, third +10, the top half +4,
+  anything lower -8, leaving early -10, plus 2 per elimination. Trophies never drop below zero.
+  Private rooms are unranked.
+- **Leaderboard:** the lobby lists the ten players with the most trophies.
+- **Daily reward:** 150 XP once per UTC day.
+- **Looks:** choose hair, skin, shirt colour and a hat in the lobby. Some items unlock by level
+  (gold shirt 3, midnight 5, neon 8; cap 2, headband 4, crown 6, halo 10). Other players see your
+  look in matches.
+
+## Crates
+
+Wooden crates are solid cover with 60 health. Shooting one breaks it and leaves a coin or a
+medkit. Buildings and trees cannot be damaged.
+

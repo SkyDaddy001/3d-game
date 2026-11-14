@@ -283,6 +283,33 @@ function makeBuilding(r) {
   return g;
 }
 
+// Crates: wooden boxes that can be shot apart.
+const crateTex = makeCanvasTexture(1, (g, w, h) => {
+  g.fillStyle = '#c88a48';
+  g.fillRect(0, 0, w, h);
+  for (let i = 0; i < 5; i++) {
+    g.fillStyle = i % 2 ? 'rgba(120,70,30,0.18)' : 'rgba(255,220,160,0.14)';
+    g.fillRect(0, (i * h) / 5, w, h / 5 - 3);
+  }
+  g.strokeStyle = '#7a4a22';
+  g.lineWidth = 22;
+  g.strokeRect(11, 11, w - 22, h - 22);
+  g.lineWidth = 16;
+  g.beginPath(); g.moveTo(16, 16); g.lineTo(w - 16, h - 16); g.stroke();
+}, false, 128);
+const crateGeo = new RoundedBoxGeometry(1, 1, 1, 2, 0.06);
+const matCrate = new THREE.MeshStandardMaterial({ map: crateTex, roughness: 0.8 });
+function makeCrate(r) {
+  const m = new THREE.Mesh(crateGeo, matCrate);
+  m.scale.set(r.w, r.w, r.h);
+  m.position.set(r.x + r.w / 2, r.w / 2, r.y + r.h / 2);
+  m.rotation.y = 0;
+  m.castShadow = true;
+  m.receiveShadow = true;
+  m.userData.crate = true;
+  return m;
+}
+
 // Trees: a trunk with a canopy of three soft blobs. Size and tint vary per tree.
 const trunkGeo = new THREE.CylinderGeometry(3, 4.5, 30, 10);
 const leafGeo = new THREE.IcosahedronGeometry(1, 2);
@@ -349,7 +376,8 @@ const tracers = [];
 // picked from the player's name so each player always looks the same to everyone.
 const SKINS = [0xffd2ae, 0xf2b48a, 0xc98a5e, 0x8d5a3b];
 const HAIRS = [0x3b2a20, 0x6b3f22, 0xd9a13a, 0xb8432e, 0x22232b, 0x7a5cc9];
-const ENEMY_SHIRTS = [0xe5483f, 0xf08a2e, 0xb04fd0, 0xe04f8a, 0x3f7fe0];
+// Shirt colours, in the same order as the server's list (progress.go). The last three unlock by level.
+const SHIRTS = [0xe5483f, 0xf08a2e, 0xb04fd0, 0xe04f8a, 0x3f7fe0, 0xf5c518, 0x1d2233, 0x39ffb0];
 const MATE_SHIRT = 0x3fbf5f;
 const matCache = new Map();
 function flatMat(color, roughness = 0.6) {
@@ -402,10 +430,12 @@ function nameTag(name, color) {
 
 function makePlayerMesh(p) {
   const h = hashStr(p.name);
-  const skin = flatMat(pick(SKINS, h), 0.55);
-  const hair = flatMat(pick(HAIRS, (h * 7) % 1), 0.5);
+  // A chosen look comes as "hair.skin.shirt.hat"; without one, colours come from the name.
+  const look = p.look ? p.look.split('.').map(Number) : null;
+  const skin = flatMat(look ? SKINS[look[1]] ?? SKINS[0] : pick(SKINS, h), 0.55);
+  const hair = flatMat(look ? HAIRS[look[0]] ?? HAIRS[0] : pick(HAIRS, (h * 7) % 1), 0.5);
   const pants = flatMat(pick([0x34497a, 0x4a4f5c, 0x6a4b33], (h * 13) % 1), 0.7);
-  const shirt = new THREE.MeshStandardMaterial({ color: pick(ENEMY_SHIRTS, (h * 3) % 1), roughness: 0.55 });
+  const shirt = new THREE.MeshStandardMaterial({ color: look ? SHIRTS[look[2]] ?? SHIRTS[0] : pick(SHIRTS.slice(0, 5), (h * 3) % 1), roughness: 0.55 });
 
   const root = new THREE.Group(); // world position and facing
   const body = new THREE.Group(); // lean, bounce, and the downed pose
@@ -455,6 +485,7 @@ function makePlayerMesh(p) {
   smile.rotation.z = Math.PI;
   mesh(G.cheek, matCheek, -4.7, -1.9, 6.08, head);
   mesh(G.cheek, matCheek, 4.7, -1.9, 6.08, head);
+  if (look) addHat(head, look[3], mesh);
 
   root.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
   const tag = nameTag(p.name, '#ffffff');
@@ -466,6 +497,36 @@ function makePlayerMesh(p) {
   };
   scene.add(root);
   return root;
+}
+
+// Hats, by index in the server's hat list: 1 cap, 2 headband, 3 crown, 4 halo.
+const HAT = {
+  cap: new RoundedBoxGeometry(14.4, 4.6, 13.4, 3, 2),
+  brim: new RoundedBoxGeometry(11, 1.2, 7, 2, 0.5),
+  band: new RoundedBoxGeometry(13.7, 2.4, 12.7, 2, 0.8),
+  ring: new THREE.CylinderGeometry(5.6, 5.6, 3.2, 20, 1, true),
+  spike: new THREE.ConeGeometry(1.5, 3.6, 4),
+  halo: new THREE.TorusGeometry(5.4, 0.7, 10, 28).rotateX(Math.PI / 2),
+};
+const matCap = flatMat(0x2f6fd6, 0.6);
+const matBand = flatMat(0xe5483f, 0.6);
+const matCrown = new THREE.MeshStandardMaterial({ color: 0xf5c518, metalness: 0.9, roughness: 0.25, side: THREE.DoubleSide });
+const matHalo = new THREE.MeshStandardMaterial({ color: 0xfff2a0, emissive: 0xffe873, emissiveIntensity: 2.2 });
+function addHat(head, kind, mesh) {
+  if (kind === 1) {
+    mesh(HAT.cap, matCap, 0, 6.4, -0.2, head);
+    mesh(HAT.brim, matCap, 0, 4.9, 8.2, head);
+  } else if (kind === 2) {
+    mesh(HAT.band, matBand, 0, 2.6, -0.2, head);
+  } else if (kind === 3) {
+    mesh(HAT.ring, matCrown, 0, 8.6, 0, head);
+    for (let i = 0; i < 6; i++) {
+      const a = (i / 6) * Math.PI * 2;
+      mesh(HAT.spike, matCrown, Math.cos(a) * 5.4, 11.6, Math.sin(a) * 5.4, head);
+    }
+  } else if (kind === 4) {
+    mesh(HAT.halo, matHalo, 0, 12.5, 0, head);
+  }
 }
 
 function disposeAvatar(root) {
@@ -621,6 +682,7 @@ const ctx = overlay.getContext('2d');
 const hud = document.getElementById('status');
 const startBtn = document.getElementById('start');
 const backLink = document.getElementById('back');
+const againBtn = document.getElementById('again');
 const STICK = { x: 110, y: 0, r: 70, hit: 90 };
 const FIRE = { x: 0, y: 0, r: 55, hit: 65 };
 const RELOAD = { x: 0, y: 0, r: 34, hit: 42 };
@@ -855,6 +917,7 @@ const SFX = {
   reloadDone: () => tone(1100, 0.08, 'square', 0.06),
   switch: () => tone(700, 0.04, 'square', 0.04),
   cash: () => { tone(1200, 0.06, 'sine', 0.07); tone(1600, 0.1, 'sine', 0.07, null, 0.06); },
+  crate: () => { noiseBurst(0.16, 0.25, 1400); tone(180, 0.12, 'square', 0.06, 70); },
   buy: () => { tone(500, 0.06, 'square', 0.06); tone(750, 0.06, 'square', 0.06, null, 0.07); tone(1000, 0.1, 'square', 0.06, null, 0.14); },
 };
 
@@ -897,7 +960,10 @@ ws.onmessage = e => {
   currAt = performance.now();
 
   startBtn.hidden = msg.started;
-  backLink.hidden = !msg.over;
+  // Once you are out, or the match is over, the next match is one tap away.
+  const out = msg.over || (msg.started && !msg.me.alive);
+  backLink.hidden = !out;
+  againBtn.hidden = !out;
   if (!msg.started) hud.textContent = `${msg.alive} in the room · press Start, bots fill the empty spots`;
   else if (msg.over) hud.textContent = msg.me.place === 1 ? 'Victory!' : `Winner: ${msg.winner}`;
   else if (msg.me.downed) hud.textContent = `DOWNED · bleeding out ${Math.ceil(msg.me.bleed)}s · teammate: hold E`;
@@ -983,13 +1049,18 @@ function syncObstacles() {
     const key = `${r.x},${r.y},${r.w},${r.h}`;
     seen.add(key);
     if (!obstacleMeshes.has(key)) {
-      const m = r.k === 'tree' ? makeTree(r) : makeBuilding(r);
+      const m = r.k === 'tree' ? makeTree(r) : r.k === 'crate' ? makeCrate(r) : makeBuilding(r);
       scene.add(m);
       obstacleMeshes.set(key, m);
     }
   }
   for (const [key, m] of obstacleMeshes) {
-    if (!seen.has(key)) { scene.remove(m); obstacleMeshes.delete(key); }
+    if (!seen.has(key)) {
+      // A crate that vanishes close by was just broken: play the crack.
+      if (m.userData.crate && m.position.distanceTo(camera.position) < 500) SFX.crate();
+      scene.remove(m);
+      obstacleMeshes.delete(key);
+    }
   }
 }
 
@@ -1281,7 +1352,8 @@ const knownObstacles = new Map(); // every building and tree seen so far, for th
 let bigMap = false;
 
 function rememberObstacles() {
-  for (const r of curr.obstacles) knownObstacles.set(`${r.x},${r.y}`, r);
+  // Crates can be destroyed, so the full map leaves them out.
+  for (const r of curr.obstacles) if (r.k !== 'crate') knownObstacles.set(`${r.x},${r.y}`, r);
 }
 
 // The radar turns with the player: whatever is ahead is at the top.
@@ -1322,10 +1394,11 @@ function drawRadar(now) {
 
   // Buildings as true shapes, trees as dots.
   for (const o of curr.obstacles) {
-    if (o.k === 'tree') {
+    if (o.k === 'tree' || o.k === 'crate') {
       const [tx, ty] = toScreen(o.x + o.w / 2, o.y + o.h / 2);
-      ctx.fillStyle = 'rgba(125,255,166,0.55)';
-      ctx.beginPath(); ctx.arc(tx, ty, 2, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = o.k === 'tree' ? 'rgba(125,255,166,0.55)' : 'rgba(255,170,80,0.9)';
+      if (o.k === 'tree') { ctx.beginPath(); ctx.arc(tx, ty, 2, 0, Math.PI * 2); ctx.fill(); }
+      else ctx.fillRect(tx - 2, ty - 2, 4, 4);
       continue;
     }
     ctx.beginPath();
@@ -1624,7 +1697,8 @@ function drawOverlay(now) {
     ctx.fillText(`PLACED #${curr.me.place} // ${curr.me.kills} ELIMINATIONS`, VW / 2, VH / 2 + 26);
     ctx.fillStyle = C.good;
     ctx.font = font(18, 800);
-    ctx.fillText(`+${curr.xp} XP`, VW / 2, VH / 2 + 58);
+    const cups = curr.ranked ? `   ${curr.trophies >= 0 ? '+' : ''}${curr.trophies} TROPHIES` : '   UNRANKED ROOM';
+    ctx.fillText(`+${curr.xp} XP${cups}`, VW / 2, VH / 2 + 58);
   }
 }
 

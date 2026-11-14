@@ -70,4 +70,29 @@ select { font: inherit; font-weight: 700; padding: 10px 12px; border-radius: 14p
 .fields { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 label.check { display: flex; align-items: center; gap: 8px; font-weight: 700; margin: 10px 0; }
 label.check input { flex: none; width: 20px; height: 20px; padding: 0; }
+.row-item.me { background: #fff4c7; }
+.rank { display: inline-block; min-width: 34px; color: #5b6478; }
+.pill.trophy { background: #fff1c2; color: #7a5200; font-size: 14px; }
+.lookrow { display: flex; gap: 16px; align-items: center; margin-bottom: 12px; }
+.lookrow .fields { flex: 1; }
+.preview { --hair: #3b2a20; --skin: #ffd2ae; --shirt: #e5483f; position: relative; width: 84px; height: 132px; flex: none; }
+.preview i { position: absolute; left: 50%; transform: translateX(-50%); display: block; }
+.preview .face { top: 22px; width: 64px; height: 58px; border-radius: 16px; background: var(--skin);
+  box-shadow: inset -14px -8px 0 -8px rgba(0,0,0,0.08); }
+.preview .face::before, .preview .face::after { content: ""; position: absolute; top: 20px; width: 12px; height: 16px; border-radius: 50%;
+  background: radial-gradient(circle at 60% 60%, #1c1c24 0 45%, #fff 46%); }
+.preview .face::before { left: 12px; } .preview .face::after { right: 12px; }
+.preview .hair { top: 14px; width: 68px; height: 24px; border-radius: 14px 14px 6px 6px; background: var(--hair); z-index: 1; }
+.preview .shirt { top: 84px; width: 56px; height: 46px; border-radius: 12px; background: var(--shirt); }
+.preview .hat { z-index: 2; display: none; }
+.preview[data-hat="1"] .hat { display: block; top: 6px; width: 72px; height: 20px; border-radius: 12px 12px 4px 4px; background: #2f6fd6; box-shadow: 22px 12px 0 -6px #2f6fd6; }
+.preview[data-hat="2"] .hat { display: block; top: 26px; width: 68px; height: 9px; background: #e5483f; z-index: 3; }
+.preview[data-hat="3"] .hat { display: block; top: -2px; width: 56px; height: 22px; background: #f5c518;
+  clip-path: polygon(0 100%, 0 20%, 20% 60%, 35% 0, 50% 60%, 65% 0, 80% 60%, 100% 20%, 100% 100%); }
+.preview[data-hat="4"] .hat { display: block; top: -2px; width: 60px; height: 14px; border-radius: 50%; border: 5px solid #ffe873; box-shadow: 0 0 12px #ffe873; }
 
+.lookrow .fields { grid-template-columns: 1fr; gap: 6px; }
+.lookrow label { display: grid; grid-template-columns: 52px 1fr; align-items: center; margin: 0; }
+.lookrow select { margin-top: 0; padding: 7px 10px; }
+.row-item .small { white-space: nowrap; }
+.pill.trophy { white-space: nowrap; }

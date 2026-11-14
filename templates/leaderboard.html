@@ -1,0 +1,8 @@
+{{range .}}
+<div class="row-item{{if .Me}} me{{end}}">
+  <span><span class="rank">#{{.Rank}}</span> {{.Name}} <span class="small">· Level {{.Level}}</span></span>
+  <span class="pill trophy">🏆 {{.Trophies}}</span>
+</div>
+{{else}}
+<p class="empty">No ranked players yet. Win a public match to get on the board.</p>
+{{end}}

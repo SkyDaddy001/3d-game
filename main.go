@@ -4,6 +4,7 @@ import (
 	"context"
 	"embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html/template"
 	"io/fs"
@@ -86,21 +87,110 @@ func (s *Server) render(w http.ResponseWriter, name string, data any) {
 	}
 }
 
+// dict builds a map from key and value pairs, so a template can pass several values to another.
+func dict(pairs ...any) map[string]any {
+	m := map[string]any{}
+	for i := 0; i+1 < len(pairs); i += 2 {
+		m[pairs[i].(string)] = pairs[i+1]
+	}
+	return m
+}
+
+// lookChoice is one option in the lobby's avatar editor.
+type lookChoice struct {
+	Index    int
+	Name     string
+	Color    string
+	Level    int
+	Locked   bool
+	Selected bool
+}
+
+func lookChoices(opts []LookOption, selected, level int) []lookChoice {
+	out := make([]lookChoice, len(opts))
+	for i, o := range opts {
+		out[i] = lookChoice{Index: i, Name: o.Name, Color: o.Color, Level: o.Level, Locked: o.Level > level, Selected: i == selected}
+	}
+	return out
+}
+
 func (s *Server) index(w http.ResponseWriter, r *http.Request) {
 	acc := sessionFrom(r).acc
 	level, into, need := LevelProgress(acc.XP)
 	s.render(w, "index.html", struct {
-		Name     string
-		Verified bool
-		Friends  []string
-		Level    int
-		XPInto   int
-		XPNeed   int
-		Percent  int
-		Matches  int
-		Wins     int
-		Kills    int
-	}{acc.Name, acc.Verified, acc.Friends, level, into, need, into * 100 / need, acc.Matches, acc.Wins, acc.Kills})
+		Name       string
+		Verified   bool
+		Friends    []string
+		Level      int
+		XPInto     int
+		XPNeed     int
+		Percent    int
+		Matches    int
+		Wins       int
+		Kills      int
+		Trophies   int
+		DailyReady bool
+		DailyXP    int
+		Hair       []lookChoice
+		Skin       []lookChoice
+		Shirt      []lookChoice
+		Hat        []lookChoice
+	}{
+		acc.Name, acc.Verified, acc.Friends, level, into, need, into * 100 / need, acc.Matches, acc.Wins, acc.Kills,
+		acc.Trophies, acc.DailyReady(time.Now()), dailyXP,
+		lookChoices(hairOptions, acc.Look.Hair, level), lookChoices(skinOptions, acc.Look.Skin, level),
+		lookChoices(shirtOptions, acc.Look.Shirt, level), lookChoices(hatOptions, acc.Look.Hat, level),
+	})
+}
+
+// claimDaily gives the once-a-day XP bonus.
+func (s *Server) claimDaily(w http.ResponseWriter, r *http.Request) {
+	if _, err := s.store.ClaimDaily(sessionFrom(r).token, time.Now()); err != nil {
+		if errors.Is(err, ErrDailyClaimed) {
+			http.Error(w, err.Error(), http.StatusConflict)
+			return
+		}
+		httpError(w, err)
+		return
+	}
+	w.Header().Set("HX-Redirect", "/")
+	w.WriteHeader(http.StatusOK)
+}
+
+// saveLook stores the avatar chosen in the lobby.
+func (s *Server) saveLook(w http.ResponseWriter, r *http.Request) {
+	num := func(k string) int {
+		n, err := strconv.Atoi(r.FormValue(k))
+		if err != nil {
+			return -1
+		}
+		return n
+	}
+	err := s.store.SetLook(sessionFrom(r).token, Look{Hair: num("hair"), Skin: num("skin"), Shirt: num("shirt"), Hat: num("hat")})
+	if err != nil {
+		status := http.StatusUnprocessableEntity
+		if errors.Is(err, ErrLookLocked) {
+			status = http.StatusForbidden
+		}
+		http.Error(w, err.Error(), status)
+		return
+	}
+	fmt.Fprint(w, "Look saved.")
+}
+
+// leaderboard lists the players with the most trophies.
+func (s *Server) leaderboard(w http.ResponseWriter, r *http.Request) {
+	type row struct {
+		Rank, Trophies, Level int
+		Name                  string
+		Me                    bool
+	}
+	me := sessionFrom(r).acc.Name
+	var rows []row
+	for i, a := range s.store.Top(10) {
+		rows = append(rows, row{Rank: i + 1, Trophies: a.Trophies, Level: LevelFor(a.XP), Name: a.Name, Me: a.Name == me})
+	}
+	s.render(w, "leaderboard.html", rows)
 }
 
 func (s *Server) listMatches(w http.ResponseWriter, r *http.Request) {
@@ -159,6 +249,7 @@ func (s *Server) createMatch(w http.ResponseWriter, r *http.Request) {
 	m.Max = size
 	m.Mode = mode
 	m.Private = r.FormValue("private") == "on"
+	m.Ranked = !m.Private // trophies only move in public rooms, so friends cannot trade wins
 	m.Host = sessionFrom(r).acc.Name
 	m.FillTo = 0
 	if bots {
@@ -242,11 +333,13 @@ func (s *Server) serveWS(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	p, ok := m.Join(sessionFrom(r).acc.Name)
+	acc := sessionFrom(r).acc
+	p, ok := m.Join(acc.Name)
 	if !ok {
 		http.Error(w, "match full or already started", http.StatusConflict)
 		return
 	}
+	m.SetLook(p, acc.Look.Code())
 	c, err := websocket.Accept(w, r, nil) // same-origin check enforced by default
 	if err != nil {
 		m.Leave(p)
@@ -303,11 +396,15 @@ func (s *Server) newMatch(id string) *Match {
 	m := NewMatch(id)
 	m.mu.Lock()
 	m.FillTo = s.botFill
+	m.Ranked = true // createMatch turns this off for private rooms
 	m.OnEnd = func(results []PlayerResult) {
+		ranked := m.IsRanked()
 		for _, r := range results {
-			err := s.store.RecordMatch(r.Name, MatchResult{
-				XP: ComputeXP(r.Kills, r.Place, r.Damage), Kills: r.Kills, Won: r.Won,
-			})
+			res := MatchResult{XP: ComputeXP(r.Kills, r.Place, r.Damage), Kills: r.Kills, Won: r.Won}
+			if ranked {
+				res.Trophies = ComputeTrophies(r.Place, r.Kills, r.Players)
+			}
+			err := s.store.RecordMatch(r.Name, res)
 			if err != nil {
 				log.Println("record match:", r.Name, err)
 			}
@@ -325,7 +422,7 @@ func redirectTo(w http.ResponseWriter, id string) {
 
 // newServer opens the account store at storePath. An empty path keeps accounts in memory.
 func newServer(storePath string, mailer Mailer) (*Server, error) {
-	tmpl, err := template.ParseFS(templateFS, "templates/*.html")
+	tmpl, err := template.New("").Funcs(template.FuncMap{"dict": dict}).ParseFS(templateFS, "templates/*.html")
 	if err != nil {
 		return nil, err
 	}
@@ -356,6 +453,9 @@ func newMux(s *Server) (http.Handler, error) {
 	mux.HandleFunc("GET /matches", s.listMatches)
 	mux.HandleFunc("POST /matches", s.createMatch)
 	mux.HandleFunc("POST /rooms/join", s.joinByNumber)
+	mux.HandleFunc("POST /daily", s.claimDaily)
+	mux.HandleFunc("POST /profile/look", s.saveLook)
+	mux.HandleFunc("GET /leaderboard", s.leaderboard)
 	mux.HandleFunc("GET /matches/{id}", s.matchPage)
 	mux.HandleFunc("POST /matches/{id}/join", s.joinMatch)
 	mux.HandleFunc("POST /matches/{id}/start", s.startMatch)

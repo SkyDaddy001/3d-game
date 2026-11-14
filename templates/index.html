@@ -49,6 +49,7 @@
         <div class="small">{{.XPInto}} / {{.XPNeed}} XP to the next level</div>
       </div>
       <div class="stats">
+        <div><b>🏆 {{.Trophies}}</b>Trophies</div>
         <div><b>{{.Matches}}</b>Matches</div>
         <div><b>{{.Wins}}</b>Wins</div>
         <div><b>{{.Kills}}</b>Kills</div>
@@ -56,6 +57,8 @@
     </div>
     <div class="actions">
       <button class="go" hx-post="/matches/quick" hx-swap="none">▶ Play · random team</button>
+      {{if .DailyReady}}<button hx-post="/daily" hx-swap="none">🎁 Daily reward · +{{.DailyXP}} XP</button>
+      {{else}}<span class="pill">Daily reward claimed · back tomorrow</span>{{end}}
     </div>
     <div class="status err" id="form-status"></div>
   </section>
@@ -91,6 +94,28 @@
       </form>
     </section>
     <section class="card">
+      <h2>Top players</h2>
+      <div hx-get="/leaderboard" hx-trigger="load, every 15s" hx-swap="innerHTML"></div>
+      <p class="small">Trophies change in public rooms only.</p>
+    </section>
+    <section class="card">
+      <h2>Your look</h2>
+      <form id="look" hx-post="/profile/look" hx-target="#look-status">
+        <div class="lookrow">
+          <div class="preview" aria-hidden="true"><i class="hat"></i><i class="hair"></i><i class="face"></i><i class="shirt"></i></div>
+          <div class="fields">
+            {{template "lookselect" (dict "Label" "Hair" "Field" "hair" "Options" .Hair)}}
+            {{template "lookselect" (dict "Label" "Skin" "Field" "skin" "Options" .Skin)}}
+            {{template "lookselect" (dict "Label" "Shirt" "Field" "shirt" "Options" .Shirt)}}
+            {{template "lookselect" (dict "Label" "Hat" "Field" "hat" "Options" .Hat)}}
+          </div>
+        </div>
+        <button type="submit">Save look</button>
+      </form>
+      <div class="status" id="look-status"></div>
+      <p class="small">Teammates always see your shirt as green in a match. More items unlock as you level up.</p>
+    </section>
+    <section class="card">
       <h2>Invites</h2>
       <div hx-get="/invites" hx-trigger="load, every 3s" hx-swap="innerHTML"></div>
       <form class="row" hx-post="/invites" hx-target="#invite-status">
@@ -114,6 +139,21 @@
   <footer><a href="/terms">Terms of Service</a> · <a href="/privacy">Privacy Policy</a> · &copy; 2026 Tarak B Patel</footer>
 </main>
 <script>
+  // Live preview of the avatar editor.
+  (function () {
+    var form = document.getElementById('look');
+    if (!form) return;
+    function paint() {
+      var pv = form.querySelector('.preview');
+      ['hair', 'skin', 'shirt'].forEach(function (f) {
+        var opt = form.elements[f].selectedOptions[0];
+        pv.style.setProperty('--' + f, opt.dataset.color);
+      });
+      pv.dataset.hat = form.elements.hat.value;
+    }
+    form.addEventListener('change', paint);
+    paint();
+  })();
   // Show the server's reason when a form is refused (name taken, wrong code, and so on).
   document.body.addEventListener('htmx:responseError', function (e) {
     var el = document.getElementById('form-status');
@@ -122,3 +162,11 @@
 </script>
 </body>
 </html>
+{{define "lookselect"}}
+<label>{{.Label}}
+  <select name="{{.Field}}">
+    {{range .Options}}<option value="{{.Index}}" data-color="{{.Color}}"{{if .Selected}} selected{{end}}{{if .Locked}} disabled{{end}}>{{.Name}}{{if .Locked}} (Level {{.Level}}){{end}}</option>
+    {{end}}
+  </select>
+</label>
+{{end}}

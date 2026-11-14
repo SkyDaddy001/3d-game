@@ -29,7 +29,8 @@
   <div id="hud">
     <span id="status">Connecting…</span>
     <button id="start" hx-post="/matches/{{.ID}}/start" hx-swap="none">Start</button>
-    <a id="back" href="/" hidden>Back to lobby</a>
+    <button id="again" hx-post="/matches/quick" hx-swap="none" hidden>Play again</button>
+    <a id="back" href="/" hidden>Lobby</a>
   </div>
   <script>window.MATCH = { id: {{.ID}}, name: {{.Name}} };</script>
   <script type="module" src="/static/game3d.js"></script>

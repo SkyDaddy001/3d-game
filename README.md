@@ -172,7 +172,8 @@ Playing still needs the server: there is no offline mode.
 - **Play again:** once you are out or the match ends, one button joins the next public room.
 - **Trophies:** public rooms are ranked. A win is +30, second +18, third +10, the top half +4,
   anything lower -8, leaving early -10, plus 2 per elimination. Trophies never drop below zero.
-  Private rooms are unranked.
+  Private rooms are unranked, and so is any room that starts with fewer than two real players,
+  so beating bots alone does not move the leaderboard.
 - **Leaderboard:** the lobby lists the ten players with the most trophies.
 - **Daily reward:** 150 XP once per UTC day.
 - **Looks:** choose hair, skin, shirt colour and a hat in the lobby. Some items unlock by level
@@ -184,3 +185,6 @@ Playing still needs the server: there is no offline mode.
 Wooden crates are solid cover with 60 health. Shooting one breaks it and leaves a coin or a
 medkit. Buildings and trees cannot be damaged.
 
+## Deploying
+
+See [DEPLOY.md](DEPLOY.md) for running the server on a Linux machine with HTTPS, with systemd or Docker.

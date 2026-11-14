@@ -1,0 +1,6 @@
+# Caddy gets and renews the HTTPS certificate by itself and passes WebSockets through.
+# Replace the domain, and point its DNS A record at the server first.
+play.example.com {
+	encode gzip
+	reverse_proxy 127.0.0.1:8080
+}

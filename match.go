@@ -471,6 +471,17 @@ func (m *Match) Start() bool {
 	if m.started || len(m.players) == 0 {
 		return false
 	}
+	// Trophies need a real opponent: a room with fewer than two people is unranked, so nobody can
+	// climb the leaderboard by beating bots.
+	people := 0
+	for _, p := range m.players {
+		if p.bot == nil && !p.gone {
+			people++
+		}
+	}
+	if people < 2 {
+		m.Ranked = false
+	}
 	m.addBotsLocked(m.FillTo)
 	if len(m.players) < 2 {
 		return false

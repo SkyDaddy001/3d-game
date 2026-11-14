@@ -28,13 +28,14 @@ var templateFS embed.FS
 var staticFS embed.FS
 
 type Server struct {
-	mu      sync.Mutex
-	matches map[string]*Match
-	tmpl    *template.Template
-	store   *Store
-	mailer  Mailer
-	invites map[string][]invite // lowercase usertag -> pending invites
-	botFill int                 // room size that bots fill up to when a match starts; 0 for no bots
+	mu           sync.Mutex
+	matches      map[string]*Match
+	tmpl         *template.Template
+	store        *Store
+	mailer       Mailer
+	invites      map[string][]invite // lowercase usertag -> pending invites
+	secureCookie bool                // mark the login cookie Secure; turn on when served over HTTPS
+	botFill      int                 // room size that bots fill up to when a match starts; 0 for no bots
 }
 
 // defaultBotFill is the room size bots fill up to unless ARENA_BOT_FILL says otherwise.
@@ -485,6 +486,18 @@ func main() {
 		log.Fatal(err)
 	}
 	go s.sweepClosed(context.Background())
-	log.Println("listening on :8080, accounts in", dataPath)
-	log.Fatal(http.ListenAndServe(":8080", mux))
+	s.secureCookie = os.Getenv("ARENA_SECURE_COOKIE") == "1"
+	addr := os.Getenv("ARENA_ADDR")
+	if addr == "" {
+		addr = ":8080"
+	}
+	if s.mailer == nil {
+		log.Println("warning: no email settings, so sign-in codes cannot be sent and nobody new can play")
+	}
+	if !s.secureCookie {
+		log.Println("warning: ARENA_SECURE_COOKIE is not 1; set it when the site is served over HTTPS")
+	}
+	srv := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 10 * time.Second}
+	log.Println("listening on", addr, "accounts in", dataPath)
+	log.Fatal(srv.ListenAndServe())
 }

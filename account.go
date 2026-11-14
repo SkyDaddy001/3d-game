@@ -10,7 +10,7 @@ import (
 )
 
 // deviceCookie holds the secret that logs a browser into its account. It is HttpOnly, so page
-// scripts cannot read it. Serve over HTTPS in production and also set Secure on this cookie.
+// scripts cannot read it. With ARENA_SECURE_COOKIE=1 it is also marked Secure, for HTTPS sites.
 const deviceCookie = "arena_device"
 
 type session struct {
@@ -49,6 +49,7 @@ func (s *Server) withAccount(next http.Handler) http.Handler {
 				Path:     "/",
 				MaxAge:   365 * 24 * 60 * 60,
 				HttpOnly: true,
+				Secure:   s.secureCookie,
 				SameSite: http.SameSiteLaxMode,
 			})
 		}

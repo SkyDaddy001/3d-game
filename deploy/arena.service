@@ -1,0 +1,25 @@
+# systemd unit for running Arena Royale on a Linux server without Docker.
+# Install: copy the binary to /opt/arena/arena-server, this file to /etc/systemd/system/,
+# put the settings in /etc/arena.env, then: systemctl enable --now arena
+[Unit]
+Description=Arena Royale game server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=arena
+Group=arena
+WorkingDirectory=/var/lib/arena
+EnvironmentFile=/etc/arena.env
+ExecStart=/opt/arena/arena-server
+Restart=on-failure
+RestartSec=2
+# Lock the process down: it only needs its data directory and the network.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/arena
+
+[Install]
+WantedBy=multi-user.target

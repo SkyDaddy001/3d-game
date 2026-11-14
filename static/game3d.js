@@ -311,7 +311,8 @@ function makeCrate(r) {
 }
 
 // Trees: a trunk with a canopy of three soft blobs. Size and tint vary per tree.
-const trunkGeo = new THREE.CylinderGeometry(3, 4.5, 30, 10);
+// The trunk is tall enough that the leaves stay above a player's eyes, even right beside the tree.
+const trunkGeo = new THREE.CylinderGeometry(3, 4.5, 48, 10);
 const leafGeo = new THREE.IcosahedronGeometry(1, 2);
 const matTrunk = new THREE.MeshStandardMaterial({ color: 0x9a6a3f, roughness: 0.9 });
 const LEAF_MATS = [0x4fbf4a, 0x66cc55, 0x3fae5a, 0x8bd450].map(c => new THREE.MeshStandardMaterial({ color: c, roughness: 0.85 }));
@@ -320,9 +321,9 @@ function makeTree(r) {
   const k = 0.85 + hash01(r.x, r.y) * 0.6;
   const mat = LEAF_MATS[Math.floor(hash01(r.y, r.x) * LEAF_MATS.length)];
   const trunk = new THREE.Mesh(trunkGeo, matTrunk);
-  trunk.position.y = 15;
+  trunk.position.y = 24;
   g.add(trunk);
-  for (const [x, y, z, s] of [[0, 44, 0, 22], [-13, 34, 6, 15], [12, 36, -7, 16], [2, 33, 13, 13]]) {
+  for (const [x, y, z, s] of [[0, 64, 0, 22], [-13, 54, 6, 15], [12, 56, -7, 16], [2, 53, 13, 13]]) {
     const leaf = new THREE.Mesh(leafGeo, mat);
     leaf.scale.set(s, s * 0.9, s);
     leaf.position.set(x, y, z);

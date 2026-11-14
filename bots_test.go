@@ -185,3 +185,27 @@ func TestBotsCannotHeadshot(t *testing.T) {
 		t.Fatalf("bot shot dead centre: HP %v, want a body shot", target.HP)
 	}
 }
+
+// A room with one real player is unranked; two real players keep it ranked.
+func TestRankedNeedsTwoRealPlayers(t *testing.T) {
+	solo := NewMatch("rank01")
+	solo.mu.Lock()
+	solo.FillTo, solo.Ranked = 8, true
+	solo.mu.Unlock()
+	solo.Join("only_one")
+	solo.Start()
+	if solo.IsRanked() {
+		t.Fatal("one person against bots should not be ranked")
+	}
+
+	duo := NewMatch("rank02")
+	duo.mu.Lock()
+	duo.FillTo, duo.Ranked = 8, true
+	duo.mu.Unlock()
+	duo.Join("first_p")
+	duo.Join("second_p")
+	duo.Start()
+	if !duo.IsRanked() {
+		t.Fatal("two people in a public room should be ranked")
+	}
+}

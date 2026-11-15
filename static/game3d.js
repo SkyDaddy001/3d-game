@@ -860,6 +860,7 @@ let prevZoneR = null;
 let lastHitSeq = 0;
 let hitFlash = { until: 0, kind: '' };
 let lastReloading = false;
+let lastPhase = '';
 
 function ensureAudio() {
   if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -938,6 +939,13 @@ ws.onmessage = e => {
     if (msg.ammo.credits > curr.ammo.credits) SFX.cash();
     if (msg.ammo.credits < curr.ammo.credits) SFX.buy();
   }
+  // Rounds mode: the armory opens by itself in each buy phase and closes when the fight starts.
+  const phase = msg.round ? msg.round.phase : '';
+  if (phase !== lastPhase) {
+    if (phase === 'buy') { shopOpen = msg.me.alive; bigMap = false; SFX.ping(); }
+    if (phase === 'fight') { shopOpen = false; SFX.zone(); }
+    lastPhase = phase;
+  }
   if (msg.ammo.reloading !== lastReloading) {
     lastReloading = msg.ammo.reloading;
     if (msg.ammo.reloading) SFX.reloadStart(); else SFX.reloadDone();
@@ -962,12 +970,17 @@ ws.onmessage = e => {
 
   startBtn.hidden = msg.started;
   // Once you are out, or the match is over, the next match is one tap away.
-  const out = msg.over || (msg.started && !msg.me.alive);
+  const out = msg.over || (msg.started && !msg.me.alive && !msg.round);
   backLink.hidden = !out;
   againBtn.hidden = !out;
   if (!msg.started) hud.textContent = `${msg.alive} in the room · press Start, bots fill the empty spots`;
   else if (msg.over) hud.textContent = msg.me.place === 1 ? 'Victory!' : `Winner: ${msg.winner}`;
   else if (msg.me.downed) hud.textContent = `DOWNED · bleeding out ${Math.ceil(msg.me.bleed)}s · teammate: hold E`;
+  else if (msg.round) {
+    const r = msg.round, secs = Math.ceil(r.left);
+    const clock = `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`;
+    hud.textContent = `Round ${r.num} · ${r.team} ${r.mine} : ${r.theirs} · ${r.phase === 'buy' ? 'Buy' : r.phase === 'end' ? 'Next round' : 'Fight'} ${clock}`;
+  }
   else if (msg.me.alive) hud.textContent = `Alive: ${msg.alive} · HP ${Math.round(msg.me.hp)}`;
   else hud.textContent = `Eliminated · placed #${msg.me.place}`;
 };
@@ -1678,8 +1691,26 @@ function drawOverlay(now) {
     glow(C.bad, 12);
     ctx.fillStyle = C.text;
     ctx.font = font(30, 800);
-    ctx.fillText(`ELIMINATED // #${curr.me.place}`, VW / 2, VH / 2);
+    ctx.fillText(curr.round ? 'ELIMINATED // BACK NEXT ROUND' : `ELIMINATED // #${curr.me.place}`, VW / 2, VH / 2);
     noGlow();
+  }
+  // Rounds mode banners: the buy countdown, and who took the round.
+  if (curr.round && !curr.over) {
+    const r = curr.round;
+    if (r.phase === 'buy' && !shopOpen) {
+      ctx.fillStyle = C.gold;
+      ctx.font = font(18, 800);
+      ctx.fillText(`BUY PHASE // ${Math.ceil(r.left)}s // ${touchActive ? 'TAP SHOP' : 'PRESS B'}`, VW / 2, 120);
+    }
+    if (r.phase === 'end') {
+      const last = curr.events[curr.events.length - 1] ?? '';
+      const won = last.includes(`Team ${r.team} wins`), draw = last.includes('draw');
+      glow(won ? C.good : draw ? C.main : C.bad, 14);
+      ctx.fillStyle = won ? C.good : draw ? C.text : C.bad;
+      ctx.font = font(34, 800);
+      ctx.fillText(draw ? 'ROUND DRAWN' : won ? 'ROUND WON' : 'ROUND LOST', VW / 2, VH / 2 - 60);
+      noGlow();
+    }
   }
   if (curr.over) {
     ctx.fillStyle = 'rgba(4,12,24,0.78)';
@@ -1695,7 +1726,8 @@ function drawOverlay(now) {
     noGlow();
     ctx.fillStyle = C.text;
     ctx.font = font(15);
-    ctx.fillText(`PLACED #${curr.me.place} // ${curr.me.kills} ELIMINATIONS`, VW / 2, VH / 2 + 26);
+    ctx.fillText(curr.round ? `ROUNDS ${curr.round.mine} : ${curr.round.theirs} // ${curr.me.kills} ELIMINATIONS`
+      : `PLACED #${curr.me.place} // ${curr.me.kills} ELIMINATIONS`, VW / 2, VH / 2 + 26);
     ctx.fillStyle = C.good;
     ctx.font = font(18, 800);
     const cups = curr.ranked ? `   ${curr.trophies >= 0 ? '+' : ''}${curr.trophies} TROPHIES` : '   UNRANKED ROOM';

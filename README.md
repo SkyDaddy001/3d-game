@@ -188,3 +188,17 @@ medkit. Buildings and trees cannot be damaged.
 ## Deploying
 
 See [DEPLOY.md](DEPLOY.md) for running the server on a Linux machine with HTTPS, with systemd or Docker.
+
+## Rounds mode
+
+Choose **Rounds** as the team setting of a custom room for a team-versus-team match.
+
+- The room splits into two teams, Alpha and Bravo, and bots fill empty spots.
+- Each round starts with a 12-second buy phase: the armory opens, and nobody can move or shoot.
+- A round ends when one team is wiped out, or after 100 seconds, when the team with more players
+  standing (then more total health) takes it. The arena is small and its zone shrinks every 25
+  seconds.
+- Everyone starts with 1,000 credits. A round win pays 1,400, a loss 900, and an elimination 300.
+  Credits carry over. Survivors keep their weapons; anyone who died keeps only the pistol.
+- First team to 5 rounds wins the match. If a whole team leaves, the other team wins.
+

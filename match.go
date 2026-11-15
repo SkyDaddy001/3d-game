@@ -227,6 +227,7 @@ type Snapshot struct {
 	XP        int          `json:"xp"`       // experience earned this match; set once the match is over
 	Trophies  int          `json:"trophies"` // trophy change this match; set once a ranked match is over
 	Ranked    bool         `json:"ranked"`
+	Round     *RoundView   `json:"round,omitempty"` // set in rounds mode
 }
 
 type Match struct {
@@ -253,12 +254,14 @@ type Match struct {
 	// FillTo is the room size: when the match starts, bots join until it holds this many players.
 	FillTo int
 	// Room settings, chosen by whoever created the room.
-	Max     int     // most players allowed; zero means the server limit
-	Mode    string  // "solo", "duo", or empty: duos once there are four or more players
-	Private bool    // hidden from the room list and from quick play; joined by number or invite
-	Host    string  // usertag of the creator
-	Ranked  bool    // results change trophies; set for public rooms
-	elapsed float64 // seconds of play since the match started
+	Max        int         // most players allowed; zero means the server limit
+	Mode       string      // "solo", "duo", or empty: duos once there are four or more players
+	Private    bool        // hidden from the room list and from quick play; joined by number or invite
+	Host       string      // usertag of the creator
+	Ranked     bool        // results change trophies; set for public rooms
+	elapsed    float64     // seconds of play since the match started
+	round      *roundState // set in rounds mode
+	resultSize int         // what placements were measured against when the match finished
 }
 
 // PlayerResult is one player's outcome, reported when the match ends.
@@ -360,12 +363,16 @@ func (m *Match) eliminate(p *Player, by string, killer *Player, headshot bool) {
 	p.HP = 0
 	p.Alive = false
 	p.downed = false
-	p.Place = m.countAlive() + 1
 	how := ""
 	if headshot {
 		how = " (headshot)"
 	}
-	m.logEvent(fmt.Sprintf("%s eliminated by %s%s (#%d)", p.Name, by, how, p.Place))
+	if m.round != nil { // rounds have no placements: players come back next round
+		m.logEvent(fmt.Sprintf("%s eliminated by %s%s", p.Name, by, how))
+	} else {
+		p.Place = m.countAlive() + 1
+		m.logEvent(fmt.Sprintf("%s eliminated by %s%s (#%d)", p.Name, by, how, p.Place))
+	}
 	if killer != nil {
 		killer.revealLeft = bountyTime
 		killer.kills++
@@ -486,7 +493,11 @@ func (m *Match) Start() bool {
 	if len(m.players) < 2 {
 		return false
 	}
-	m.assignTeams()
+	if m.Mode == "rounds" {
+		m.startRounds()
+	} else {
+		m.assignTeams()
+	}
 	m.started = true
 	return true
 }
@@ -608,13 +619,25 @@ func (m *Match) Closed() bool {
 }
 
 func (m *Match) step(dt float64) {
-	m.zoneLeft -= dt
-	if m.zoneLeft <= 0 {
-		m.shrinkZone()
-		m.zoneLeft = shrinkEvery
+	frozen := m.round != nil && m.stepRound(dt)
+	if !frozen {
+		m.zoneLeft -= dt
+		if m.zoneLeft <= 0 {
+			m.shrinkZone()
+			m.zoneLeft = shrinkEvery
+			if m.round != nil {
+				m.zoneLeft = roundShrinkEvery
+			}
+		}
 	}
 	m.elapsed += dt
 	m.thinkBots(dt)
+	if frozen {
+		// Buy phase and the pause between rounds: shopping works, moving and shooting do not.
+		for _, p := range m.players {
+			p.DX, p.DY, p.wantShoot, p.wantRevive = 0, 0, false, false
+		}
+	}
 
 	for _, p := range m.players {
 		if !p.Alive {
@@ -684,7 +707,11 @@ func (m *Match) step(dt float64) {
 	}
 	m.pings = live
 
-	m.checkWinner()
+	if m.round != nil {
+		m.checkRound()
+	} else {
+		m.checkWinner()
+	}
 }
 
 // checkWinner ends the match once at most one team has living players.
@@ -713,9 +740,18 @@ func (m *Match) checkWinner() {
 			m.winner = fmt.Sprintf("Team %d", p.Team)
 		}
 	}
+	m.finish(m.winner, len(m.players))
+}
+
+// finish ends the match, announces the winner, and reports each real player's result. size is
+// what placements are measured against: the player count, or 2 for a two-team match.
+func (m *Match) finish(winner string, size int) {
+	m.over = true
+	m.winner = winner
 	if m.winner != "nobody" {
 		m.logEvent(fmt.Sprintf("%s wins the match", m.winner))
 	}
+	m.resultSize = size
 	if m.OnEnd != nil {
 		results := make([]PlayerResult, 0, len(m.players))
 		for _, p := range m.players {
@@ -723,7 +759,7 @@ func (m *Match) checkWinner() {
 				continue
 			}
 			results = append(results, PlayerResult{
-				Name: p.Name, Kills: p.kills, Place: p.Place, Damage: int(p.damage), Won: p.Place == 1, Players: len(m.players),
+				Name: p.Name, Kills: p.kills, Place: p.Place, Damage: int(p.damage), Won: p.Place == 1, Players: size,
 			})
 		}
 		go m.OnEnd(results)
@@ -1098,10 +1134,13 @@ func (m *Match) broadcast() {
 			Pings: []Ping{}, HitSeq: me.hitSeq, HitKind: me.hitKind, Ammo: me.ammoView(),
 			Ranked: m.Ranked,
 		}
+		if m.round != nil {
+			snap.Round = m.roundView(me)
+		}
 		if m.over {
 			snap.XP = ComputeXP(me.kills, me.Place, int(me.damage))
 			if m.Ranked {
-				snap.Trophies = ComputeTrophies(me.Place, me.kills, len(m.players))
+				snap.Trophies = ComputeTrophies(me.Place, me.kills, m.resultSize)
 			}
 		}
 		for _, q := range m.players {

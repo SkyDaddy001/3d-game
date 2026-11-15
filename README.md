@@ -202,3 +202,17 @@ Choose **Rounds** as the team setting of a custom room for a team-versus-team ma
   Credits carry over. Survivors keep their weapons; anyone who died keeps only the pistol.
 - First team to 5 rounds wins the match. If a whole team leaves, the other team wins.
 
+## Replays of bot matches
+
+- **Watch a bot match** in the lobby makes the server play a complete match between bots at full
+  speed, record it, and open the recording. The form fields `bots` (2 to 16) and `mode`
+  (`solo`, `duo`, `rounds`, or empty) are accepted by `POST /replays/bots`.
+- The replay page follows one player from behind. The camera moves to another player when the
+  one it follows is eliminated, and to wherever shooting breaks out after a few quiet seconds.
+- Controls: the buttons in the status bar, or Space to pause, Left and Right to change player,
+  A to hand the camera back to the director, + and - for speed, R to restart.
+- Recordings hold the world ten times a second (about 1.5 MB for a short match). The server keeps
+  the latest 12 in memory; they are gone after a restart.
+- Adding `?capture` to a replay address stops the page from animating by itself, so a script can
+  render it frame by frame with `window.__replay.step(ms, speed)` and build a video.
+

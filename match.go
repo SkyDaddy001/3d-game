@@ -261,6 +261,7 @@ type Match struct {
 	Ranked     bool        // results change trophies; set for public rooms
 	elapsed    float64     // seconds of play since the match started
 	round      *roundState // set in rounds mode
+	rec        *recorder   // set while the match is being recorded for a replay
 	resultSize int         // what placements were measured against when the match finished
 }
 
@@ -274,7 +275,15 @@ type PlayerResult struct {
 	Players int // how many players, bots included, the match had
 }
 
+// NewMatch creates a match and starts its clock.
 func NewMatch(id string) *Match {
+	m := newMatchState(id)
+	go m.run()
+	return m
+}
+
+// newMatchState builds a match with its map, but does not start the clock.
+func newMatchState(id string) *Match {
 	m := &Match{
 		ID:        id,
 		players:   map[int]*Player{},
@@ -310,7 +319,6 @@ func NewMatch(id string) *Match {
 	for i := 0; i < 80; i++ {
 		m.addLoot()
 	}
-	go m.run()
 	return m
 }
 
@@ -933,6 +941,7 @@ func (m *Match) fire(p *Player) {
 		return
 	}
 	p.mags[p.weapon]--
+	m.recordShot(p, w.Range)
 
 	hitAny, hitHead := false, false
 	for i := 0; i < w.Pellets; i++ {

@@ -57,6 +57,7 @@
     </div>
     <div class="actions">
       <button class="go" hx-post="/matches/quick" hx-swap="none">▶ Play · random team</button>
+      <button class="ghost" hx-post="/replays/bots" hx-swap="none">🎬 Watch a bot match</button>
       {{if .DailyReady}}<button hx-post="/daily" hx-swap="none">🎁 Daily reward · +{{.DailyXP}} XP</button>
       {{else}}<span class="pill">Daily reward claimed · back tomorrow</span>{{end}}
     </div>

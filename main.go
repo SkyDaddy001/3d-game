@@ -34,6 +34,8 @@ type Server struct {
 	store        *Store
 	mailer       Mailer
 	invites      map[string][]invite // lowercase usertag -> pending invites
+	replays      map[string]*Replay  // recent bot-match recordings
+	replayOrder  []string            // replay IDs, oldest first
 	secureCookie bool                // mark the login cookie Secure; turn on when served over HTTPS
 	botFill      int                 // room size that bots fill up to when a match starts; 0 for no bots
 }
@@ -322,7 +324,10 @@ func (s *Server) matchPage(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	s.render(w, "match.html", struct{ ID, Name string }{id, name})
+	s.render(w, "match.html", struct {
+		ID, Name string
+		Replay   bool
+	}{id, name, false})
 }
 
 func (s *Server) serveWS(w http.ResponseWriter, r *http.Request) {
@@ -431,7 +436,7 @@ func newServer(storePath string, mailer Mailer) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Server{matches: map[string]*Match{}, tmpl: tmpl, store: store, mailer: mailer, invites: map[string][]invite{}, botFill: defaultBotFill}, nil
+	return &Server{matches: map[string]*Match{}, tmpl: tmpl, store: store, mailer: mailer, invites: map[string][]invite{}, botFill: defaultBotFill, replays: map[string]*Replay{}}, nil
 }
 
 func newMux(s *Server) (http.Handler, error) {
@@ -454,6 +459,9 @@ func newMux(s *Server) (http.Handler, error) {
 	mux.HandleFunc("GET /matches", s.listMatches)
 	mux.HandleFunc("POST /matches", s.createMatch)
 	mux.HandleFunc("POST /rooms/join", s.joinByNumber)
+	mux.HandleFunc("POST /replays/bots", s.recordBotMatch)
+	mux.HandleFunc("GET /replays/{id}", s.replayPage)
+	mux.HandleFunc("GET /replays/{id}/data", s.replayData)
 	mux.HandleFunc("POST /daily", s.claimDaily)
 	mux.HandleFunc("POST /profile/look", s.saveLook)
 	mux.HandleFunc("GET /leaderboard", s.leaderboard)

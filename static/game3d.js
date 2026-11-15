@@ -11,6 +11,9 @@ import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 const { id } = window.MATCH;
 const EYE = 27;
 const TICK_MS = 1000 / 30;
+const REPLAY = !!window.MATCH.replay;                              // spectating a recording
+const CAPTURE = new URLSearchParams(location.search).has('capture'); // frames are stepped from outside
+let vclock = 0;                                                      // animation clock while replaying
 const lerp = (a, b, t) => a + (b - a) * t;
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 // Phones get a lighter pipeline: no bloom and smaller shadows.
@@ -925,11 +928,10 @@ const SFX = {
 
 // ---------- Networking ----------
 const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-const ws = new WebSocket(`${proto}://${location.host}/ws/${id}`);
+const ws = REPLAY ? null : new WebSocket(`${proto}://${location.host}/ws/${id}`);
 let prev = null, curr = null, currAt = 0;
 
-ws.onmessage = e => {
-  const msg = JSON.parse(e.data);
+function onState(msg) {
   if (msg.t !== 'state') return;
 
   if (curr) {
@@ -983,11 +985,12 @@ ws.onmessage = e => {
   }
   else if (msg.me.alive) hud.textContent = `Alive: ${msg.alive} · HP ${Math.round(msg.me.hp)}`;
   else hud.textContent = `Eliminated · placed #${msg.me.place}`;
-};
+}
+if (ws) ws.onmessage = e => onState(JSON.parse(e.data));
 
 // Movement is sent in world coordinates, relative to where the player is looking.
 setInterval(() => {
-  if (ws.readyState !== WebSocket.OPEN) return;
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
   const fx = Math.cos(yaw), fy = Math.sin(yaw);
   const rx = -Math.sin(yaw), ry = Math.cos(yaw);
   const forward = (keys.has('w') || keys.has('arrowup') ? 1 : 0) - (keys.has('s') || keys.has('arrowdown') ? 1 : 0) - stick.dy;
@@ -1048,8 +1051,9 @@ function syncPlayers(t, dt, now) {
     if (!mesh) { mesh = makePlayerMesh(p); playerMeshes.set(p.id, mesh); }
     const old = prevById.get(p.id) ?? p;
     mesh.position.set(lerp(old.x, p.x, t), 0, lerp(old.y, p.y, t));
-    const speed = Math.hypot(p.x - old.x, p.y - old.y) * 30;
-    const mate = curr.me.team !== 0 && p.team === curr.me.team;
+    const speed = Math.hypot(p.x - old.x, p.y - old.y) * (REPLAY ? 1000 / R.frameMs : 30);
+    // A spectator has no side, so in a replay everyone keeps their own colours.
+    const mate = !REPLAY && curr.me.team !== 0 && p.team === curr.me.team;
     animateAvatar(mesh, p, speed, dt, now, mate);
   }
   for (const [pid, mesh] of playerMeshes) {
@@ -1143,6 +1147,7 @@ let vmRaise = 0;     // 1 right after a weapon switch, easing to 0 as the new we
 let walkPhase = 0;   // advances while the local player moves
 let walkAmount = 0;  // 0 standing, 1 at full speed, smoothed
 function updateViewmodel(now) {
+  if (REPLAY) { for (const vm of viewmodels.values()) vm.visible = false; return; }
   const name = curr.ammo.weapon;
   for (const [wName, vm] of viewmodels) vm.visible = wName === name && curr.me.alive;
   const vm = viewmodelFor(name);
@@ -1166,6 +1171,7 @@ function updateViewmodel(now) {
 
 // ---------- Camera ----------
 function updateCamera(meX, meY, dt) {
+  if (REPLAY) { spectatorCamera(meX, meY, dt); return; }
   const speed = Math.hypot(curr.me.x - prev.me.x, curr.me.y - prev.me.y) * 30;
   walkAmount = lerp(walkAmount, clamp(speed / 180, 0, 1), Math.min(1, dt * 10));
   walkPhase += dt * 11 * walkAmount;
@@ -1344,7 +1350,7 @@ function drawHealth() {
   ctx.textAlign = 'left';
   ctx.fillStyle = color;
   ctx.font = font(11);
-  ctx.fillText(downed ? 'DOWNED // BLEEDING OUT' : 'VITALS', x + 14, y + 17);
+  ctx.fillText(downed ? 'DOWNED // BLEEDING OUT' : REPLAY ? `SPECTATING ${curr.me.name.toUpperCase()}` : 'VITALS', x + 14, y + 17);
   ctx.textAlign = 'right';
   ctx.fillStyle = C.text;
   ctx.font = font(15, 800);
@@ -1669,8 +1675,8 @@ function drawOverlay(now) {
 
   drawFeed();
   if (curr.me.alive) {
-    if (!shopOpen && !bigMap) { drawCrosshair(curr.me.bloom); drawHitMarker(now); }
-    drawAmmo();
+    if (!shopOpen && !bigMap && !REPLAY) { drawCrosshair(curr.me.bloom); drawHitMarker(now); }
+    if (!REPLAY) drawAmmo();
     drawHealth();
   }
   drawCompass();
@@ -1687,7 +1693,7 @@ function drawOverlay(now) {
     ctx.fillText('DOWNED // TEAMMATE CAN REVIVE YOU', VW / 2, VH / 2 + 70);
     noGlow();
   }
-  if (curr.started && !curr.me.alive && !curr.over && !bigMap) {
+  if (curr.started && !curr.me.alive && !curr.over && !bigMap && !REPLAY) {
     glow(C.bad, 12);
     ctx.fillStyle = C.text;
     ctx.font = font(30, 800);
@@ -1718,7 +1724,7 @@ function drawOverlay(now) {
     ctx.fillStyle = C.main;
     ctx.fillRect(0, VH / 2 - 76, VW, 2);
     ctx.fillRect(0, VH / 2 + 82, VW, 2);
-    const won = curr.me.place === 1;
+    const won = curr.me.place === 1 && !REPLAY;
     glow(won ? C.gold : C.main, 16);
     ctx.fillStyle = won ? C.gold : C.text;
     ctx.font = font(38, 800);
@@ -1726,12 +1732,13 @@ function drawOverlay(now) {
     noGlow();
     ctx.fillStyle = C.text;
     ctx.font = font(15);
-    ctx.fillText(curr.round ? `ROUNDS ${curr.round.mine} : ${curr.round.theirs} // ${curr.me.kills} ELIMINATIONS`
+    ctx.fillText(REPLAY ? `BOT MATCH // ${Math.round(R.duration)}s // ${R.players} PLAYERS`
+      : curr.round ? `ROUNDS ${curr.round.mine} : ${curr.round.theirs} // ${curr.me.kills} ELIMINATIONS`
       : `PLACED #${curr.me.place} // ${curr.me.kills} ELIMINATIONS`, VW / 2, VH / 2 + 26);
     ctx.fillStyle = C.good;
     ctx.font = font(18, 800);
     const cups = curr.ranked ? `   ${curr.trophies >= 0 ? '+' : ''}${curr.trophies} TROPHIES` : '   UNRANKED ROOM';
-    ctx.fillText(`+${curr.xp} XP${cups}`, VW / 2, VH / 2 + 58);
+    if (!REPLAY) ctx.fillText(`+${curr.xp} XP${cups}`, VW / 2, VH / 2 + 58);
   }
 }
 
@@ -1742,7 +1749,15 @@ function frame(now) {
   requestAnimationFrame(frame);
   const dt = Math.min(0.1, (now - lastFrame) / 1000);
   lastFrame = now;
+  if (!REPLAY) { renderFrame(now, dt, 0); return; }
+  if (CAPTURE) return; // frames are drawn by window.__replay.step
+  vclock += dt * 1000;
+  renderFrame(vclock, dt, replayPaused ? 0 : dt * 1000 * replaySpeed);
+}
 
+// renderFrame draws one frame. now is the animation clock in milliseconds and dt the seconds since
+// the last frame; gameMs is how far a replay moves forward (unused in a live match).
+function renderFrame(now, dt, gameMs) {
   for (let i = tracers.length - 1; i >= 0; i--) {
     if (now > tracers[i].until) {
       scene.remove(tracers[i].obj);
@@ -1751,8 +1766,13 @@ function frame(now) {
     }
   }
 
+  let t = 0;
+  if (REPLAY) {
+    if (R) t = replayAdvance(gameMs, now);
+  } else if (curr) {
+    t = Math.min(1, (now - currAt) / TICK_MS);
+  }
   if (curr) {
-    const t = Math.min(1, (now - currAt) / TICK_MS);
     const meX = lerp(prev.me.x, curr.me.x, t);
     const meY = lerp(prev.me.y, curr.me.y, t);
     syncPlayers(t, dt, now);
@@ -1768,6 +1788,175 @@ function frame(now) {
   if (composer && fxOn) composer.render(); else renderer.render(scene, camera);
   drawOverlay(now);
 }
+
+// ---------- Replay: spectating a recorded match ----------
+// The recording holds the whole world ten times a second. Playback builds the same snapshot shape
+// the live game uses, seen from whichever player the camera follows.
+let R = null;            // the loaded recording
+let replayTime = 0;      // milliseconds of game time shown
+let replaySpeed = 1;
+let replayPaused = false;
+let followId = 0;
+let autoFollow = true;   // the camera moves to wherever the action is
+let followSince = 0;     // replayTime of the last camera switch
+let camYaw = 0;
+let shotsDoneTo = -1;    // last frame whose shots have been drawn
+const lastShotBy = new Map(); // player id -> replayTime of their latest shot
+const snapCache = { i: -1, follow: -1, snap: null };
+
+async function loadReplay() {
+  hud.textContent = 'Loading replay…';
+  const res = await fetch(`/replays/${id}/data`);
+  if (!res.ok) { hud.textContent = 'This replay is no longer kept. Record a new one from the lobby.'; return; }
+  const rep = await res.json();
+  // Carry loot and obstacles forward into frames where they did not change.
+  let loot = [], obstacles = [];
+  for (const f of rep.frames) {
+    loot = f.loot ?? loot;
+    obstacles = f.obstacles ?? obstacles;
+    f.loot = loot;
+    f.obstacles = obstacles;
+  }
+  R = rep;
+  followId = rep.frames[0].players[0].id;
+  camYaw = rep.frames[0].players[0].aim;
+  window.__replay.ready = true;
+  window.__replay.duration = rep.duration * 1000;
+}
+
+const FAKE_AMMO = { weapon: 'Pistol', slot: 1, mag: 0, reserve: 0, reloading: false, reloadFrac: 0, auto: false, range: 0,
+  credits: 0, owned: [true, false, false, false, false], prices: [0, 0, 0, 0, 0], ammoPrice: 0 };
+
+function replaySnap(i) {
+  i = clamp(i, 0, R.frames.length - 1);
+  if (snapCache.i === i && snapCache.follow === followId) return snapCache.snap;
+  const f = R.frames[i];
+  const alive = f.players.filter(p => p.alive);
+  const me = alive.find(p => p.id === followId) ?? f.players.find(p => p.id === followId) ?? alive[0] ?? f.players[0];
+  const snap = {
+    t: 'state', started: true, over: R.finished && i === R.frames.length - 1, winner: R.winner, alive: alive.length,
+    zone: f.zone, me, players: alive, loot: f.loot, obstacles: f.obstacles, events: f.events,
+    revealed: [], pings: [], hitSeq: 0, hitKind: '', ammo: FAKE_AMMO, xp: 0, trophies: 0, ranked: false,
+    round: f.round ? { ...f.round, team: 'Alpha' } : undefined,
+  };
+  snapCache.i = i; snapCache.follow = followId; snapCache.snap = snap;
+  return snap;
+}
+
+function switchFollow(dir) {
+  const f = R.frames[clamp(Math.floor(replayTime / R.frameMs), 0, R.frames.length - 1)];
+  const alive = f.players.filter(p => p.alive).sort((a, b) => a.id - b.id);
+  if (!alive.length) return;
+  const at = alive.findIndex(p => p.id === followId);
+  followId = alive[(at + dir + alive.length) % alive.length].id;
+  followSince = replayTime;
+}
+
+// The director keeps the camera on the action: it leaves a player who has died, and after a few
+// quiet seconds it moves to someone who is shooting.
+function direct(f) {
+  const alive = f.players.filter(p => p.alive);
+  if (!alive.length) return;
+  const mine = alive.find(p => p.id === followId);
+  const busy = id => replayTime - (lastShotBy.get(id) ?? -1e9) < 1500;
+  if (!mine) {
+    const here = f.players.find(p => p.id === followId);
+    alive.sort((a, b) => Math.hypot(a.x - here.x, a.y - here.y) - Math.hypot(b.x - here.x, b.y - here.y));
+    followId = alive[0].id;
+    followSince = replayTime;
+    return;
+  }
+  if (!autoFollow || replayTime - followSince < 5000 || busy(followId)) return;
+  const fighter = alive.find(p => p.id !== followId && busy(p.id));
+  if (fighter) { followId = fighter.id; followSince = replayTime; }
+}
+
+// replayShots draws the tracers (and nearby gunfire sounds) for frames the clock has just passed.
+function replayShots(upTo, now) {
+  if (upTo < shotsDoneTo) shotsDoneTo = upTo; // the clock was moved back
+  for (let i = shotsDoneTo + 1; i <= upTo; i++) {
+    const f = R.frames[i];
+    for (const s of f.shots ?? []) {
+      lastShotBy.set(s.id, f.t * 1000);
+      const p = f.players.find(q => q.id === s.id);
+      if (!p || upTo - i > 3) continue;
+      const from = new THREE.Vector3(p.x + Math.cos(s.a) * 14, 19, p.y + Math.sin(s.a) * 14);
+      const to = new THREE.Vector3(p.x + Math.cos(s.a) * s.r, 19, p.y + Math.sin(s.a) * s.r);
+      const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints([from, to]),
+        new THREE.LineBasicMaterial({ color: 0xfff0b0, transparent: true, opacity: 0.9 }));
+      scene.add(line);
+      tracers.push({ obj: line, until: now + 110 });
+      if (!CAPTURE && camera.position.distanceTo(from) < 700) (SHOT_SOUND[p.weapon] ?? SHOT_SOUND.Pistol)();
+    }
+    direct(f);
+  }
+  shotsDoneTo = upTo;
+}
+
+// replayAdvance moves the clock and sets prev/curr for this frame. It returns the blend factor.
+function replayAdvance(gameMs, now) {
+  const end = (R.frames.length - 1) * R.frameMs;
+  replayTime = clamp(replayTime + gameMs, 0, end);
+  const i = Math.min(Math.floor(replayTime / R.frameMs), R.frames.length - 2);
+  replayShots(i, now);
+  prev = replaySnap(i);
+  curr = replaySnap(i + 1);
+  const clock = ms => `${Math.floor(ms / 60000)}:${String(Math.floor(ms / 1000) % 60).padStart(2, '0')}`;
+  hud.textContent = `Replay · ${curr.me.name} · ${clock(replayTime)} / ${clock(end)}${replayPaused ? ' · paused' : replaySpeed !== 1 ? ` · ${replaySpeed}x` : ''}`;
+  backLink.hidden = false;
+  return (replayTime - i * R.frameMs) / R.frameMs;
+}
+
+// The spectator camera trails behind and above the followed player, turning smoothly with them.
+function spectatorCamera(meX, meY, dt) {
+  const diff = Math.atan2(Math.sin(curr.me.aim - camYaw), Math.cos(curr.me.aim - camYaw));
+  camYaw += diff * Math.min(1, dt * 2.5);
+  yaw = camYaw;
+  const back = curr.me.downed ? 60 : 78, up = 52;
+  camera.position.set(meX - Math.cos(camYaw) * back, up, meY - Math.sin(camYaw) * back);
+  camera.lookAt(meX + Math.cos(camYaw) * 30, 24, meY + Math.sin(camYaw) * 30);
+  skyDome.position.copy(camera.position);
+  for (const c of clouds.children) {
+    c.position.x += dt * 6;
+    if (c.position.x > 3600) c.position.x = -1600;
+  }
+}
+
+window.__replay = {
+  ready: false,
+  duration: 0,
+  // step renders one frame after moving the clock: wallMs of animation time, at the given speed.
+  // Used to capture a video frame by frame.
+  step(wallMs, speed = 1) {
+    vclock += wallMs;
+    renderFrame(vclock, wallMs / 1000, wallMs * speed);
+    return { time: replayTime, done: replayTime >= (R.frames.length - 1) * R.frameMs, following: curr.me.name };
+  },
+  follow: id => { followId = id; autoFollow = false; },
+};
+
+if (REPLAY) {
+  loadReplay();
+  startBtn.hidden = true;
+  if (CAPTURE) document.body.classList.add('capture'); // a clean picture for video: no buttons
+  addEventListener('keydown', e => {
+    if (!R) return;
+    if (e.key === ' ') { e.preventDefault(); replayPaused = !replayPaused; }
+    if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') { autoFollow = false; switchFollow(e.key === 'ArrowRight' ? 1 : -1); }
+    if (e.key === 'a' || e.key === 'A') autoFollow = true;
+    if (e.key === '+' || e.key === '=') replaySpeed = Math.min(8, replaySpeed * 2);
+    if (e.key === '-') replaySpeed = Math.max(0.25, replaySpeed / 2);
+    if (e.key === 'r' || e.key === 'R') { replayTime = 0; shotsDoneTo = -1; lastShotBy.clear(); followSince = 0; }
+  });
+  for (const [btn, fn] of [
+    ['rp-prev', () => { autoFollow = false; switchFollow(-1); }],
+    ['rp-next', () => { autoFollow = false; switchFollow(1); }],
+    ['rp-pause', () => { replayPaused = !replayPaused; }],
+    ['rp-speed', () => { replaySpeed = replaySpeed >= 4 ? 1 : replaySpeed * 2; }],
+    ['rp-restart', () => { replayTime = 0; shotsDoneTo = -1; lastShotBy.clear(); followSince = 0; replayPaused = false; }],
+  ]) document.getElementById(btn)?.addEventListener('click', () => { if (R) fn(); });
+}
+
 requestAnimationFrame(frame);
 
 if (new URLSearchParams(location.search).has('debug')) {

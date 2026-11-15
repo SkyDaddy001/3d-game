@@ -219,7 +219,8 @@ func TestBotsLootBeforeHunting(t *testing.T) {
 	enemy := &Player{ID: 2, Name: "e", Team: 2, X: 800, Y: 500, Alive: true, HP: 100}
 	m.players[1], m.players[2] = bot, enemy
 	m.loot[9] = &Loot{ID: 9, X: 500, Y: 700, K: "cash"}
-	for i := 0; i < 30*3; i++ {
+	// Stop as soon as the coin is taken: the next coin appears somewhere random.
+	for i := 0; i < 30*3 && m.loot[9] != nil; i++ {
 		m.step(1.0 / 30)
 	}
 	if enemy.HP != 100 {

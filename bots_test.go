@@ -209,3 +209,51 @@ func TestRankedNeedsTwoRealPlayers(t *testing.T) {
 		t.Fatal("two people in a public room should be ranked")
 	}
 }
+
+// In the opening phase a bot ignores a distant enemy and goes for coins instead.
+func TestBotsLootBeforeHunting(t *testing.T) {
+	m := newArena()
+	m.started = true
+	m.elapsed = botGrace + 1
+	bot := &Player{ID: 1, Name: "Bot A", Team: 1, X: 500, Y: 500, Alive: true, HP: 100, bot: &botState{strafeDir: 1}}
+	enemy := &Player{ID: 2, Name: "e", Team: 2, X: 800, Y: 500, Alive: true, HP: 100}
+	m.players[1], m.players[2] = bot, enemy
+	m.loot[9] = &Loot{ID: 9, X: 500, Y: 700, K: "cash"}
+	for i := 0; i < 30*3; i++ {
+		m.step(1.0 / 30)
+	}
+	if enemy.HP != 100 {
+		t.Fatal("a bot attacked a distant enemy during the loot phase")
+	}
+	if _, still := m.loot[9]; still {
+		t.Fatalf("the bot did not collect the coin 200 units away in three seconds (at %.0f, %.0f)", bot.X, bot.Y)
+	}
+
+	// Once the phase is over, the same enemy is fair game.
+	m.elapsed = botLootPhase + 1
+	bot.X, bot.Y = 600, 500 // coin hunting may have led it away; put it back in view
+	for i := 0; i < 30*8 && enemy.HP == 100; i++ {
+		m.step(1.0 / 30)
+	}
+	if enemy.HP == 100 {
+		t.Fatal("after the loot phase the bot should fight a visible enemy")
+	}
+}
+
+// Bots start well apart from each other.
+func TestBotsSpawnSpreadOut(t *testing.T) {
+	m := newArena()
+	m.zoneR = 1500
+	m.addBotsLocked(8)
+	closest := math.Inf(1)
+	for _, a := range m.players {
+		for _, b := range m.players {
+			if a != b {
+				closest = math.Min(closest, math.Hypot(a.X-b.X, a.Y-b.Y))
+			}
+		}
+	}
+	if closest < 200 {
+		t.Fatalf("two bots spawned only %.0f apart", closest)
+	}
+}

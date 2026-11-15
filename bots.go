@@ -15,6 +15,9 @@ const (
 	botReact      = 0.6   // seconds an enemy must stay visible before a bot opens fire
 	botReviveSeek = 320.0 // how far a bot will go to revive a teammate
 	botGrace      = 5.0   // seconds after the start before bots open fire, so nobody dies on arrival
+	botLootPhase  = 35.0  // opening seconds spent gathering cash and buying rather than hunting
+	botEarlySight = 170.0 // during the loot phase a bot only fights what comes this close
+	botCashSeek   = 650.0 // how far a bot will walk for a coin
 )
 
 // Bot names contain a space, which usertags cannot, so a bot never shares a name with a player.
@@ -49,7 +52,7 @@ func (m *Match) addBotsLocked(size int) {
 			continue
 		}
 		used[name] = true
-		x, y := m.spawnPoint()
+		x, y := m.spreadSpawn()
 		id := m.newID()
 		m.players[id] = &Player{
 			ID: id, Name: name, HP: 100, Alive: true, X: x, Y: y,
@@ -99,9 +102,13 @@ func (m *Match) thinkBots(dt float64) {
 		}
 		b.detourLeft -= dt
 
-		// Nearest visible enemy.
+		// Nearest visible enemy. Early on, bots keep to themselves unless someone gets close or
+		// shoots them, so a match opens with looting and buying instead of an instant brawl.
 		var target *Player
 		best := botSight
+		if m.round == nil && m.elapsed < botLootPhase && p.hurtCool == 0 {
+			best = botEarlySight
+		}
 		for _, q := range m.players {
 			if q == p || !q.Alive || (p.Team != 0 && q.Team == p.Team) {
 				continue
@@ -202,7 +209,22 @@ func (m *Match) botGoal(p *Player) (x, y float64, ok bool) {
 	if p.HP < 70 {
 		bestD := 400.0
 		for _, l := range m.loot {
-			if d := math.Hypot(l.X-p.X, l.Y-p.Y); d < bestD {
+			if d := math.Hypot(l.X-p.X, l.Y-p.Y); l.K != "cash" && d < bestD {
+				bestD, x, y, ok = d, l.X, l.Y, true
+			}
+		}
+		if ok {
+			return x, y, true
+		}
+	}
+	// Still saving up for a rifle: collect coins, staying inside the zone.
+	if !p.owned[2] {
+		bestD := botCashSeek
+		for _, l := range m.loot {
+			if l.K != "cash" || math.Hypot(l.X-m.zoneX, l.Y-m.zoneY) > m.zoneR*0.8 {
+				continue
+			}
+			if d := math.Hypot(l.X-p.X, l.Y-p.Y); d < bestD && m.clearLine(p.X, p.Y, l.X, l.Y) {
 				bestD, x, y, ok = d, l.X, l.Y, true
 			}
 		}
@@ -240,4 +262,21 @@ func botPurchase(p *Player) int {
 		}
 	}
 	return 0
+}
+
+// spreadSpawn picks the candidate spawn point farthest from everyone already in the room, so
+// players do not start on top of each other.
+func (m *Match) spreadSpawn() (float64, float64) {
+	bestX, bestY, bestD := 0.0, 0.0, -1.0
+	for try := 0; try < 14; try++ {
+		x, y := m.spawnPoint()
+		nearest := math.Inf(1)
+		for _, q := range m.players {
+			nearest = math.Min(nearest, math.Hypot(q.X-x, q.Y-y))
+		}
+		if nearest > bestD {
+			bestX, bestY, bestD = x, y, nearest
+		}
+	}
+	return bestX, bestY
 }

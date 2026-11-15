@@ -1800,6 +1800,7 @@ let followId = 0;
 let autoFollow = true;   // the camera moves to wherever the action is
 let followSince = 0;     // replayTime of the last camera switch
 let camYaw = 0;
+let camBack = 78;        // how far behind the player the camera sits
 let shotsDoneTo = -1;    // last frame whose shots have been drawn
 const lastShotBy = new Map(); // player id -> replayTime of their latest shot
 const snapCache = { i: -1, follow: -1, snap: null };
@@ -1912,7 +1913,19 @@ function spectatorCamera(meX, meY, dt) {
   const diff = Math.atan2(Math.sin(curr.me.aim - camYaw), Math.cos(curr.me.aim - camYaw));
   camYaw += diff * Math.min(1, dt * 2.5);
   yaw = camYaw;
-  const back = curr.me.downed ? 60 : 78, up = 52;
+  // Pull the camera in when a building would be between it and the player, and lift it as it
+  // gets closer so the view stays clear.
+  let want = curr.me.downed ? 60 : 78;
+  const inBuilding = d => {
+    const cx = meX - Math.cos(camYaw) * d, cy = meY - Math.sin(camYaw) * d;
+    return curr.obstacles.some(o => o.k !== 'tree' && o.k !== 'crate'
+      && cx > o.x - 8 && cx < o.x + o.w + 8 && cy > o.y - 8 && cy < o.y + o.h + 8);
+  };
+  for (let d = 14; d <= want; d += 8) {
+    if (inBuilding(d)) { want = Math.max(10, d - 12); break; }
+  }
+  camBack = lerp(camBack, want, Math.min(1, dt * 5));
+  const back = camBack, up = 52 + (78 - Math.min(78, camBack)) * 0.45;
   camera.position.set(meX - Math.cos(camYaw) * back, up, meY - Math.sin(camYaw) * back);
   camera.lookAt(meX + Math.cos(camYaw) * 30, 24, meY + Math.sin(camYaw) * 30);
   skyDome.position.copy(camera.position);

@@ -164,3 +164,53 @@ func TestBuildingsCannotBeDestroyed(t *testing.T) {
 		t.Fatalf("building: obstacles %d, hit markers %d", len(m.obstacles), shooter.hitSeq)
 	}
 }
+
+// Bigger crates take more shots, and shipping containers cannot be broken at all.
+func TestBigCratesAndContainers(t *testing.T) {
+	m := newArena()
+	m.obstacles = []Rect{{X: 100, Y: 29, W: 42, H: 42, K: "crate", HP: 170}}
+	shooter := &Player{ID: 1, Name: "a", Team: 1, X: 0, Y: 50, Alive: true, HP: 100, Aim: 0}
+	m.players[1] = shooter
+	shots := 0
+	for len(m.obstacles) > 0 && shots < 20 {
+		shooter.bloom = 0
+		m.fire(shooter)
+		shots++
+	}
+	if shots != 7 { // 170 health at 25 per pistol shot
+		t.Fatalf("a large crate broke after %d pistol shots, want 7", shots)
+	}
+
+	m.obstacles = []Rect{{X: 100, Y: 0, W: containerWid, H: containerLen, K: "container"}}
+	for i := 0; i < 30; i++ {
+		shooter.bloom = 0
+		m.fire(shooter)
+	}
+	if len(m.obstacles) != 1 {
+		t.Fatal("a container was destroyed")
+	}
+}
+
+// A new map has every crate size and some containers, and no cover overlaps other obstacles.
+func TestMapHasVariedCover(t *testing.T) {
+	m := newMatchState("cover1")
+	sizes, containers := map[float64]int{}, 0
+	for i, o := range m.obstacles {
+		switch o.K {
+		case "crate":
+			sizes[o.W]++
+		case "container":
+			containers++
+		default:
+			continue
+		}
+		for j, q := range m.obstacles {
+			if i != j && o.X < q.X+q.W && o.X+o.W > q.X && o.Y < q.Y+q.H && o.Y+o.H > q.Y {
+				t.Fatalf("%s at (%.0f, %.0f) overlaps another obstacle", o.K, o.X, o.Y)
+			}
+		}
+	}
+	if len(sizes) != 3 || containers == 0 {
+		t.Fatalf("crate sizes %v, containers %d", sizes, containers)
+	}
+}

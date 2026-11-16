@@ -302,6 +302,45 @@ const crateTex = makeCanvasTexture(1, (g, w, h) => {
 }, false, 128);
 const crateGeo = new RoundedBoxGeometry(1, 1, 1, 2, 0.06);
 const matCrate = new THREE.MeshStandardMaterial({ map: crateTex, roughness: 0.8 });
+// Shipping containers: ribbed steel boxes in a few paint colours. They cannot be broken.
+const containerTex = makeCanvasTexture(1, (g, w, h) => {
+  g.fillStyle = '#ffffff';
+  g.fillRect(0, 0, w, h);
+  for (let x = 0; x < w; x += 16) {
+    const grad = g.createLinearGradient(x, 0, x + 16, 0);
+    grad.addColorStop(0, 'rgba(0,0,0,0.22)');
+    grad.addColorStop(0.5, 'rgba(255,255,255,0.1)');
+    grad.addColorStop(1, 'rgba(0,0,0,0.22)');
+    g.fillStyle = grad;
+    g.fillRect(x, 0, 16, h);
+  }
+  g.fillStyle = 'rgba(0,0,0,0.25)';
+  g.fillRect(0, 0, w, 10);
+  g.fillRect(0, h - 10, w, 10);
+}, true, 256);
+const CONTAINER_COLORS = [0x2f7fd6, 0xd6542f, 0x2fa56a, 0xe0a52a, 0x8a5bd6];
+const containerMats = CONTAINER_COLORS.map(color => {
+  const long = containerTex.clone(); long.repeat.set(3, 1); long.needsUpdate = true;
+  const end = containerTex.clone(); end.repeat.set(1, 1); end.needsUpdate = true;
+  return {
+    long: new THREE.MeshStandardMaterial({ map: long, color, roughness: 0.55, metalness: 0.35 }),
+    end: new THREE.MeshStandardMaterial({ map: end, color, roughness: 0.55, metalness: 0.35 }),
+    top: new THREE.MeshStandardMaterial({ color, roughness: 0.6, metalness: 0.3 }),
+  };
+});
+const CONTAINER_H = 38;
+function makeContainer(r) {
+  const c = containerMats[Math.floor(hash01(r.x, r.y) * containerMats.length)];
+  // The long sides get the repeated ribbing whichever way the container lies.
+  const sideX = r.h > r.w ? c.long : c.end, sideZ = r.w >= r.h ? c.long : c.end;
+  const m = new THREE.Mesh(boxGeo, [sideX, sideX, c.top, c.top, sideZ, sideZ]);
+  m.scale.set(r.w, CONTAINER_H, r.h);
+  m.position.set(r.x + r.w / 2, CONTAINER_H / 2, r.y + r.h / 2);
+  m.castShadow = true;
+  m.receiveShadow = true;
+  return m;
+}
+
 function makeCrate(r) {
   const m = new THREE.Mesh(crateGeo, matCrate);
   m.scale.set(r.w, r.w, r.h);
@@ -411,6 +450,9 @@ const matCheek = new THREE.MeshBasicMaterial({ color: 0xff8f9f, transparent: tru
 const matShoe = flatMat(0x2e3140, 0.7);
 const matToyGun = new THREE.MeshStandardMaterial({ color: 0x3a3f4a, roughness: 0.4, metalness: 0.5 });
 
+const mateMarkerGeo = new THREE.ConeGeometry(4, 8, 4).rotateX(Math.PI);
+const matMateMarker = new THREE.MeshBasicMaterial({ color: 0x5dff8f, depthTest: false, transparent: true, opacity: 0.9, fog: false });
+
 function nameTag(name, color) {
   const c = document.createElement('canvas');
   c.width = 512; c.height = 128;
@@ -494,8 +536,14 @@ function makePlayerMesh(p) {
   root.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
   const tag = nameTag(p.name, '#ffffff');
   root.add(tag);
+  // A green pointer that floats over teammates and shows through walls.
+  const marker = new THREE.Mesh(mateMarkerGeo, matMateMarker);
+  marker.position.y = 58;
+  marker.renderOrder = 6;
+  marker.visible = false;
+  root.add(marker);
   root.userData = {
-    body, head, torso, armL, armR, legL, legR, eyes, shirt, tag, name: p.name,
+    body, head, torso, armL, armR, legL, legR, eyes, shirt, tag, marker, name: p.name,
     enemyColor: shirt.color.getHex(), mate: false, phase: h * 10, down: 0,
     blinkAt: performance.now() + 1500 + h * 3000, facing: null,
   };
@@ -551,6 +599,11 @@ function animateAvatar(root, p, speed, dt, now, mate) {
     u.tag.material.dispose();
     u.tag = nameTag(u.name, mate ? '#8dffa8' : '#ffffff');
     root.add(u.tag);
+    u.marker.visible = mate;
+  }
+  if (mate) {
+    u.marker.position.y = 58 + Math.sin(now / 300) * 2;
+    u.marker.rotation.y = now / 600 - u.facing;
   }
 
   // Face the aim direction, turning smoothly through the shortest angle.
@@ -1067,7 +1120,7 @@ function syncObstacles() {
     const key = `${r.x},${r.y},${r.w},${r.h}`;
     seen.add(key);
     if (!obstacleMeshes.has(key)) {
-      const m = r.k === 'tree' ? makeTree(r) : r.k === 'crate' ? makeCrate(r) : makeBuilding(r);
+      const m = r.k === 'tree' ? makeTree(r) : r.k === 'crate' ? makeCrate(r) : r.k === 'container' ? makeContainer(r) : makeBuilding(r);
       scene.add(m);
       obstacleMeshes.set(key, m);
     }
@@ -1366,6 +1419,29 @@ function drawHealth() {
   noGlow();
 }
 
+// Squad list under the radar: each teammate's health, state, and distance.
+function drawSquad() {
+  if (REPLAY || curr.me.team === 0) return;
+  const mates = curr.players.filter(p => p.team === curr.me.team);
+  mates.forEach((mate, i) => {
+    const x = 20, y = RADAR.cy + RADAR.r + 40 + i * 34, w = 156;
+    const color = mate.downed ? C.warn : mate.hp > 60 ? C.good : mate.hp > 30 ? C.warn : C.bad;
+    panel(x, y, w, 28, 8);
+    ctx.textAlign = 'left';
+    ctx.fillStyle = C.text;
+    ctx.font = font(10, 800);
+    ctx.fillText(mate.name.slice(0, 11).toUpperCase(), x + 10, y + 12);
+    ctx.textAlign = 'right';
+    ctx.fillStyle = color;
+    const dist = Math.round(Math.hypot(mate.x - curr.me.x, mate.y - curr.me.y) / 10);
+    ctx.fillText(mate.downed ? `DOWN ${Math.ceil(mate.bleed)}s` : `${dist}m`, x + w - 8, y + 12);
+    ctx.fillStyle = 'rgba(255,255,255,0.1)';
+    ctx.fillRect(x + 10, y + 17, w - 20, 5);
+    ctx.fillStyle = color;
+    ctx.fillRect(x + 10, y + 17, (w - 20) * (mate.downed ? clamp(mate.bleed / 20, 0, 1) : clamp(mate.hp, 0, 100) / 100), 5);
+  });
+}
+
 // ---------- Radar and tactical map ----------
 const RADAR = { cx: 98, cy: 98, r: 78, range: 620 };
 const knownObstacles = new Map(); // every building and tree seen so far, for the full map
@@ -1418,7 +1494,7 @@ function drawRadar(now) {
       const [tx, ty] = toScreen(o.x + o.w / 2, o.y + o.h / 2);
       ctx.fillStyle = o.k === 'tree' ? 'rgba(125,255,166,0.55)' : 'rgba(255,170,80,0.9)';
       if (o.k === 'tree') { ctx.beginPath(); ctx.arc(tx, ty, 2, 0, Math.PI * 2); ctx.fill(); }
-      else ctx.fillRect(tx - 2, ty - 2, 4, 4);
+      else { const cs = Math.max(3, o.w * k); ctx.fillRect(tx - cs / 2, ty - cs / 2, cs, cs); }
       continue;
     }
     ctx.beginPath();
@@ -1446,9 +1522,26 @@ function drawRadar(now) {
   }
   for (const mate of curr.players) {
     if (mate.team === 0 || mate.team !== curr.me.team) continue;
-    const [sx, sy] = toScreen(mate.x, mate.y);
-    ctx.fillStyle = mate.downed ? C.warn : C.good;
-    ctx.beginPath(); ctx.arc(sx, sy, 4, 0, Math.PI * 2); ctx.fill();
+    let [sx, sy] = toScreen(mate.x, mate.y);
+    // A teammate beyond the radar's range is pinned to the rim, so you always know which way they are.
+    const off = Math.hypot(sx - cx, sy - cy), far = off > r - 10;
+    if (far) { sx = cx + ((sx - cx) / off) * (r - 10); sy = cy + ((sy - cy) / off) * (r - 10); }
+    const color = mate.downed ? C.warn : C.good;
+    // An arrow showing which way they face (or, at the rim, which way they lie).
+    const ax = Math.cos(mate.aim), ay = Math.sin(mate.aim);
+    const ang = far ? Math.atan2(sy - cy, sx - cx) : Math.atan2(-(ax * fx + ay * fy), -ax * fy + ay * fx);
+    ctx.save();
+    ctx.translate(sx, sy);
+    ctx.rotate(ang + Math.PI / 2);
+    glow(color, 8);
+    ctx.fillStyle = color;
+    ctx.beginPath(); ctx.moveTo(0, -8); ctx.lineTo(6, 6); ctx.lineTo(0, 3); ctx.lineTo(-6, 6); ctx.fill();
+    noGlow();
+    ctx.restore();
+    ctx.fillStyle = C.text;
+    ctx.font = font(9, 800);
+    ctx.textAlign = 'center';
+    ctx.fillText(mate.name.slice(0, 8), sx, sy + (sy > cy ? -10 : 17));
   }
   for (const b of curr.revealed) {
     const [sx, sy] = toScreen(b.x, b.y);
@@ -1554,10 +1647,19 @@ function drawBigMap(now) {
   }
   for (const mate of curr.players) {
     if (mate.team === 0 || mate.team !== curr.me.team) continue;
-    ctx.fillStyle = mate.downed ? C.warn : C.good;
-    ctx.beginPath(); ctx.arc(x + mate.x * k, y + mate.y * k, 5, 0, Math.PI * 2); ctx.fill();
-    ctx.font = font(10);
-    ctx.fillText(mate.name, x + mate.x * k + 8, y + mate.y * k + 4);
+    const color = mate.downed ? C.warn : C.good;
+    ctx.save();
+    ctx.translate(x + mate.x * k, y + mate.y * k);
+    ctx.rotate(mate.aim + Math.PI / 2);
+    glow(color, 10);
+    ctx.fillStyle = color;
+    ctx.beginPath(); ctx.moveTo(0, -10); ctx.lineTo(7, 7); ctx.lineTo(0, 3); ctx.lineTo(-7, 7); ctx.fill();
+    noGlow();
+    ctx.restore();
+    ctx.fillStyle = C.text;
+    ctx.font = font(11, 800);
+    ctx.textAlign = 'left';
+    ctx.fillText(`${mate.name}${mate.downed ? ' // DOWN' : ''}`, x + mate.x * k + 11, y + mate.y * k + 4);
   }
   for (const b of curr.revealed) {
     ctx.fillStyle = C.bad;
@@ -1681,6 +1783,7 @@ function drawOverlay(now) {
   }
   drawCompass();
   drawRadar(now);
+  drawSquad();
   if (touchActive) drawTouchControls();
   if (bigMap) drawBigMap(now);
   if (shopOpen && curr.me.alive) drawShop(); else shopOpen = false;

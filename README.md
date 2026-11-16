@@ -216,3 +216,12 @@ Choose **Rounds** as the team setting of a custom room for a team-versus-team ma
 - Adding `?capture` to a replay address stops the page from animating by itself, so a script can
   render it frame by frame with `window.__replay.step(ms, speed)` and build a video.
 
+## Cover and teammates
+
+- Crates come in three sizes. Small ones (60 health) are low cover; medium (110) and large (170)
+  ones are tall enough to stand behind. All of them break and drop a pickup.
+- Shipping containers are long steel boxes that cannot be destroyed.
+- Teammates start next to each other. The radar shows each teammate as an arrow with their name,
+  pinned to the rim when they are out of range; a squad list under the radar shows their health
+  and distance; and a green pointer floats over them in the world, visible through walls.
+

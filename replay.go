@@ -148,6 +148,7 @@ func SimulateBotMatch(id string, bots int, mode string) *Replay {
 		m.startRounds()
 	} else {
 		m.assignTeams()
+		m.groupTeams()
 	}
 	m.started = true
 

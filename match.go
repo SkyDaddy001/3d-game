@@ -36,9 +36,12 @@ const (
 	ammoPrice    = 200  // refills the reserve of a weapon the player already owns
 	cashShare    = 0.35 // fraction of pickups that are cash rather than medkits
 	treeSize     = 10.0 // side of a tree trunk's collision square
-	crateN       = 45
-	crateSize    = 18.0
+	crateN       = 54
+	crateSize    = 18.0 // the small crate; see crateKinds for the bigger ones
 	crateHP      = 60.0
+	containerN   = 14
+	containerLen = 84.0 // shipping containers: long, unbreakable cover
+	containerWid = 32.0
 	maxEvents    = 5
 	headRadius   = 5.0 // a shot this close to the center counts as a headshot
 	headDamage   = 100.0
@@ -310,9 +313,21 @@ func newMatchState(id string) *Match {
 		}
 	}
 	// Crates are solid cover that can be shot apart; each one drops a pickup when it breaks.
+	// Containers are long steel boxes that cannot be destroyed: cover a whole team can hold.
+	for i := 0; i < containerN; i++ {
+		w, h := containerLen, containerWid
+		if rand.Intn(2) == 0 {
+			w, h = h, w
+		}
+		c := Rect{X: rand.Float64() * (worldSize - w), Y: rand.Float64() * (worldSize - h), W: w, H: h, K: "container"}
+		if m.rectFree(c) {
+			m.obstacles = append(m.obstacles, c)
+		}
+	}
 	for i := 0; i < crateN; i++ {
-		c := Rect{X: rand.Float64() * (worldSize - crateSize), Y: rand.Float64() * (worldSize - crateSize), W: crateSize, H: crateSize, K: "crate", HP: crateHP}
-		if !m.blocked(c.X+crateSize/2, c.Y+crateSize/2) {
+		kind := crateKinds[i%len(crateKinds)]
+		c := Rect{X: rand.Float64() * (worldSize - kind.size), Y: rand.Float64() * (worldSize - kind.size), W: kind.size, H: kind.size, K: "crate", HP: kind.hp}
+		if m.rectFree(c) {
 			m.obstacles = append(m.obstacles, c)
 		}
 	}
@@ -505,6 +520,7 @@ func (m *Match) Start() bool {
 		m.startRounds()
 	} else {
 		m.assignTeams()
+		m.groupTeams()
 	}
 	m.started = true
 	return true
@@ -774,6 +790,36 @@ func (m *Match) finish(winner string, size int) {
 	}
 }
 
+// groupTeams moves each team's members next to their first member, so teammates start together.
+func (m *Match) groupTeams() {
+	ids := make([]int, 0, len(m.players))
+	for id := range m.players {
+		ids = append(ids, id)
+	}
+	sort.Ints(ids)
+	anchor := map[int]*Player{}
+	for _, id := range ids {
+		p := m.players[id]
+		a, ok := anchor[p.Team]
+		if !ok || p.Team == 0 {
+			anchor[p.Team] = p
+			continue
+		}
+		for try := 0; try < 40; try++ {
+			ang, d := rand.Float64()*2*math.Pi, 45+rand.Float64()*45
+			x := clamp(a.X+math.Cos(ang)*d, playerRadius, worldSize-playerRadius)
+			y := clamp(a.Y+math.Sin(ang)*d, playerRadius, worldSize-playerRadius)
+			if !m.blocked(x, y) {
+				p.X, p.Y = x, y
+				break
+			}
+		}
+		if p.bot != nil {
+			p.bot.lastX, p.bot.lastY = p.X, p.Y
+		}
+	}
+}
+
 func (m *Match) teamMembers(team int) []*Player {
 	var out []*Player
 	for _, p := range m.players {
@@ -1009,6 +1055,23 @@ func (m *Match) shootRay(p *Player, angle, reach, dmg, headDmg float64) (bool, b
 		m.knockDown(target, p, targetHead)
 	}
 	return true, targetHead
+}
+
+// crateKinds are the crate sizes, cycled through as the map is built. A small crate is low cover;
+// the medium and large ones are tall enough to stand behind, and take more shots to break.
+var crateKinds = []struct{ size, hp float64 }{
+	{crateSize, crateHP}, {30, 110}, {42, 170}, {30, 110}, {42, 170}, {crateSize, crateHP},
+}
+
+// rectFree reports whether a new obstacle would sit clear of every existing one.
+func (m *Match) rectFree(c Rect) bool {
+	const gap = 6.0
+	for _, o := range m.obstacles {
+		if c.X < o.X+o.W+gap && c.X+c.W+gap > o.X && c.Y < o.Y+o.H+gap && c.Y+c.H+gap > o.Y {
+			return false
+		}
+	}
+	return true
 }
 
 // damageCrate wears a crate down. When it breaks it is removed and leaves a pickup behind.

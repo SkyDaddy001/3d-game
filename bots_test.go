@@ -258,3 +258,27 @@ func TestBotsSpawnSpreadOut(t *testing.T) {
 		t.Fatalf("two bots spawned only %.0f apart", closest)
 	}
 }
+
+// Teammates start next to each other, even though teams start far apart.
+func TestTeammatesStartTogether(t *testing.T) {
+	m := NewMatch("group1")
+	m.mu.Lock()
+	m.FillTo, m.Mode = 8, "duo"
+	m.mu.Unlock()
+	m.Join("lone_human")
+	m.Start()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	byTeam := map[int][]*Player{}
+	for _, p := range m.players {
+		byTeam[p.Team] = append(byTeam[p.Team], p)
+	}
+	for team, ps := range byTeam {
+		if len(ps) != 2 {
+			t.Fatalf("team %d has %d players", team, len(ps))
+		}
+		if d := math.Hypot(ps[0].X-ps[1].X, ps[0].Y-ps[1].Y); d > 100 {
+			t.Fatalf("team %d starts %.0f apart", team, d)
+		}
+	}
+}

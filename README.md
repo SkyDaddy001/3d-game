@@ -241,3 +241,12 @@ Choose **Rounds** as the team setting of a custom room for a team-versus-team ma
 - **Ping:** the radar shows the round trip to the server.
 - **Smaller snapshots:** building and pickup lists are sent only when they change.
 
+## Movement prediction
+
+Your own movement is applied on your device at once, using the server's movement rules, and is
+corrected from each server snapshot: the client starts from the server's position and replays the
+inputs the server has not answered yet. The server still decides every position.
+
+Add `?lag=150` to a match address to delay everything sent and received by that many
+milliseconds and feel a slow connection.
+

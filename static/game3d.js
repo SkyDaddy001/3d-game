@@ -1027,6 +1027,7 @@ function onState(msg) {
   prev = curr ?? msg;
   curr = msg;
   currAt = performance.now();
+  reconcile(msg);
 
   startBtn.hidden = msg.started;
   // Once you are out, or the match is over, the next match is one tap away.
@@ -1044,7 +1045,77 @@ function onState(msg) {
   else if (msg.me.alive) hud.textContent = `Alive: ${msg.alive} · HP ${Math.round(msg.me.hp)}`;
   else hud.textContent = `Eliminated · placed #${msg.me.place}`;
 }
-if (ws) ws.onmessage = e => onState(JSON.parse(e.data));
+// ?lag=150 delays everything sent and received by that many milliseconds, to try the game as it
+// would feel on a slow connection.
+const LAG = Math.max(0, Number(new URLSearchParams(location.search).get('lag')) || 0);
+function sendToServer(text) {
+  if (LAG) setTimeout(() => { if (ws.readyState === WebSocket.OPEN) ws.send(text); }, LAG);
+  else ws.send(text);
+}
+if (ws) ws.onmessage = e => {
+  const msg = JSON.parse(e.data);
+  if (LAG) setTimeout(() => onState(msg), LAG); else onState(msg);
+};
+
+// ---------- Movement prediction ----------
+// The server decides where everyone is, but waiting for it makes your own movement feel late.
+// So the client moves you at once using the server's rules, remembers the inputs the server has
+// not answered yet, and on every snapshot starts again from the server's position and replays them.
+const MOVE_SPEED = 180, PLAYER_R = 12, WORLD = 2000, STEP = 1 / 30; // must match match.go
+const pendingMoves = [];           // inputs sent but not yet reflected in a snapshot: { ts, dx, dy }
+const pred = { x: 0, y: 0 };       // where the server will put us once it has caught up
+const shown = { x: 0, y: 0 };      // what the camera uses: pred, smoothed
+let predicting = false;
+let lastMove = { dx: 0, dy: 0, at: 0 };
+
+// canMove mirrors the cases where the server ignores movement.
+function canMove() {
+  return !!curr && curr.started && !curr.over && curr.me.alive && !curr.me.downed
+    && !(curr.round && curr.round.phase !== 'fight');
+}
+function blockedAt(x, y) {
+  for (const o of curr.obstacles) {
+    if (x > o.x - PLAYER_R && x < o.x + o.w + PLAYER_R && y > o.y - PLAYER_R && y < o.y + o.h + PLAYER_R) return true;
+  }
+  return false;
+}
+// moveFor moves a position for a stretch of time under the server's rules: each axis on its own,
+// so you slide along walls. Long stretches are cut into tick-sized steps so walls are not skipped.
+function moveFor(pos, dx, dy, seconds) {
+  for (let left = Math.min(seconds, 0.5); left > 1e-6; left -= STEP) {
+    const dt = Math.min(STEP, left);
+    const nx = clamp(pos.x + dx * MOVE_SPEED * dt, 0, WORLD);
+    const ny = clamp(pos.y + dy * MOVE_SPEED * dt, 0, WORLD);
+    if (!blockedAt(nx, pos.y)) pos.x = nx;
+    if (!blockedAt(pos.x, ny)) pos.y = ny;
+  }
+}
+// reconcile runs on every snapshot. The server keeps applying an input until the next one
+// arrives, so each remembered input counts for the time until the one after it; the newest one
+// is still running and is carried forward frame by frame in shownPosition.
+function reconcile(msg) {
+  // Keep the input the server has just answered: it is still in force until the next one lands.
+  while (pendingMoves.length > 1 && pendingMoves[1].ts <= msg.echo) pendingMoves.shift();
+  pred.x = msg.me.x;
+  pred.y = msg.me.y;
+  if (!canMove()) { pendingMoves.length = 0; predicting = false; return; }
+  for (let i = 0; i + 1 < pendingMoves.length; i++) {
+    // The answered input has already moved us on the server up to the snapshot; later ones in full.
+    const from = Math.max(pendingMoves[i].ts, msg.echo ? msg.echo : pendingMoves[i].ts);
+    moveFor(pred, pendingMoves[i].dx, pendingMoves[i].dy, (pendingMoves[i + 1].ts - from) / 1000);
+  }
+  if (!predicting || Math.hypot(pred.x - shown.x, pred.y - shown.y) > 200) { shown.x = pred.x; shown.y = pred.y; }
+  predicting = true;
+}
+// shownPosition is where to draw the local player this frame.
+function shownPosition(dt, now) {
+  const target = { x: pred.x, y: pred.y };
+  moveFor(target, lastMove.dx, lastMove.dy, (now - lastMove.at) / 1000);
+  const k = Math.min(1, dt * 22);
+  shown.x += (target.x - shown.x) * k;
+  shown.y += (target.y - shown.y) * k;
+  return shown;
+}
 
 // Movement is sent in world coordinates, relative to where the player is looking.
 setInterval(() => {
@@ -1077,7 +1148,16 @@ setInterval(() => {
   const revive = keys.has('e') || reviveTouched;
   const buy = pendingBuy;
   pendingBuy = 0;
-  ws.send(JSON.stringify({ t: 'input', dx, dy, aim: yaw, shoot, ping, px, py, reload, switch: sw, revive, buy, ts: performance.now() }));
+  const ts = performance.now();
+  if (canMove()) {
+    moveFor(pred, lastMove.dx, lastMove.dy, (ts - lastMove.at) / 1000); // the input that just ended
+    pendingMoves.push({ ts, dx, dy });
+    if (pendingMoves.length > 120) pendingMoves.shift();
+    lastMove = { dx, dy, at: ts };
+  } else {
+    lastMove = { dx: 0, dy: 0, at: ts };
+  }
+  sendToServer(JSON.stringify({ t: 'input', dx, dy, aim: yaw, shoot, ping, px, py, reload, switch: sw, revive, buy, ts }));
 }, TICK_MS);
 
 // Local shots: play the weapon's sound, kick the viewmodel, flash the muzzle, and draw a tracer.
@@ -1230,7 +1310,9 @@ function updateViewmodel(now) {
 // ---------- Camera ----------
 function updateCamera(meX, meY, dt) {
   if (REPLAY) { spectatorCamera(meX, meY, dt); return; }
-  const speed = Math.hypot(curr.me.x - prev.me.x, curr.me.y - prev.me.y) * 30;
+  // While predicting, the step bob follows your input, not the server's delayed echo of it.
+  const speed = predicting ? Math.hypot(lastMove.dx, lastMove.dy) * MOVE_SPEED
+    : Math.hypot(curr.me.x - prev.me.x, curr.me.y - prev.me.y) * 30;
   walkAmount = lerp(walkAmount, clamp(speed / 180, 0, 1), Math.min(1, dt * 10));
   walkPhase += dt * 11 * walkAmount;
   // A downed player's view drops to the ground.
@@ -1858,6 +1940,7 @@ function drawOverlay(now) {
 // ---------- Main loop ----------
 let lastFrame = performance.now();
 let fxOn = true;
+let renderOn = true;
 function frame(now) {
   requestAnimationFrame(frame);
   const dt = Math.min(0.1, (now - lastFrame) / 1000);
@@ -1886,8 +1969,13 @@ function renderFrame(now, dt, gameMs) {
     t = Math.min(1, (now - currAt) / TICK_MS);
   }
   if (curr) {
-    const meX = lerp(prev.me.x, curr.me.x, t);
-    const meY = lerp(prev.me.y, curr.me.y, t);
+    let meX = lerp(prev.me.x, curr.me.x, t);
+    let meY = lerp(prev.me.y, curr.me.y, t);
+    if (!REPLAY && predicting && canMove()) {
+      const p = shownPosition(dt, now);
+      meX = p.x;
+      meY = p.y;
+    }
     syncPlayers(t, dt, now);
     syncObstacles();
     syncLoot(now);
@@ -1898,6 +1986,7 @@ function renderFrame(now, dt, gameMs) {
     updateViewmodel(now);
   }
 
+  if (!renderOn) return; // a test has switched drawing off to keep timers accurate
   if (composer && fxOn) composer.render(); else renderer.render(scene, camera);
   drawOverlay(now);
 }
@@ -2088,6 +2177,8 @@ requestAnimationFrame(frame);
 if (new URLSearchParams(location.search).has('debug')) {
   window.__arena = {
     state: () => curr && { me: curr.me, players: curr.players, started: curr.started },
+    draw: on => { renderOn = on; },
+    shown: () => ({ x: shown.x, y: shown.y, predicting, pending: pendingMoves.length, ping: pingMs }),
     look: a => { yaw = a; },
     hold: (k, on) => { if (on) keys.add(k); else keys.delete(k); },
     // Low quality keeps software-rendered test browsers responsive while staging a shot.

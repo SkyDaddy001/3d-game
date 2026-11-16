@@ -917,6 +917,7 @@ let lastHitSeq = 0;
 let hitFlash = { until: 0, kind: '' };
 let lastReloading = false;
 let lastPhase = '';
+let pingMs = 0; // smoothed round trip to the server, including its tick wait
 
 function ensureAudio() {
   if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -986,6 +987,10 @@ let prev = null, curr = null, currAt = 0;
 
 function onState(msg) {
   if (msg.t !== 'state') return;
+  // The server leaves these lists out when they have not changed since the last snapshot.
+  msg.obstacles ??= curr ? curr.obstacles : [];
+  msg.loot ??= curr ? curr.loot : [];
+  if (msg.echo) pingMs = pingMs ? lerp(pingMs, performance.now() - msg.echo, 0.1) : performance.now() - msg.echo;
 
   if (curr) {
     if (msg.me.alive && msg.me.hp > curr.me.hp + 1) SFX.pickup();
@@ -1072,7 +1077,7 @@ setInterval(() => {
   const revive = keys.has('e') || reviveTouched;
   const buy = pendingBuy;
   pendingBuy = 0;
-  ws.send(JSON.stringify({ t: 'input', dx, dy, aim: yaw, shoot, ping, px, py, reload, switch: sw, revive, buy }));
+  ws.send(JSON.stringify({ t: 'input', dx, dy, aim: yaw, shoot, ping, px, py, reload, switch: sw, revive, buy, ts: performance.now() }));
 }, TICK_MS);
 
 // Local shots: play the weapon's sound, kick the viewmodel, flash the muzzle, and draw a tracer.
@@ -1593,6 +1598,11 @@ function drawRadar(now) {
   ctx.font = font(9);
   ctx.textAlign = 'center';
   ctx.fillText(touchActive ? 'TAP FOR MAP' : '[TAB] MAP', cx, cy + r + 18);
+  if (pingMs && !REPLAY) {
+    ctx.fillStyle = pingMs < 90 ? C.good : pingMs < 180 ? C.warn : C.bad;
+    ctx.textAlign = 'left';
+    ctx.fillText(`PING ${Math.round(pingMs)}ms`, cx + r - 14, cy - r + 2);
+  }
 }
 
 // Full map: north up, the whole arena, everything seen so far.

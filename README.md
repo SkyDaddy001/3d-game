@@ -225,3 +225,19 @@ Choose **Rounds** as the team setting of a custom room for a team-versus-team ma
   pinned to the rim when they are out of range; a squad list under the radar shows their health
   and distance; and a green pointer floats over them in the world, visible through walls.
 
+## Accounts on several devices, limits, and safety
+
+- **Another device:** on a new device choose "Already have an account?", enter the verified email,
+  and type the code. Up to five devices can be signed in. "Sign out other devices" and "Sign out
+  here" are in the lobby. An account without a verified email cannot sign out of its only device,
+  because nothing could bring it back.
+- **Rate limits:** sign-in codes, code guesses, usertag attempts, room creation, bot-match
+  recordings, friend requests, invites, and reports are capped per device and per address.
+- **Backups:** the accounts file is copied on a schedule; see DEPLOY.md.
+- **Usertags:** names that pose as staff or bots, or contain blocked words, are refused, including
+  simple disguises such as digits for letters.
+- **Block and report:** blocking ends a friendship and stops friend requests and invites both
+  ways. Reports are saved to a file for the operator; nothing acts on them automatically.
+- **Ping:** the radar shows the round trip to the server.
+- **Smaller snapshots:** building and pickup lists are sent only when they change.
+

@@ -12,6 +12,7 @@ import (
 	"math/rand"
 	"net/http"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -37,7 +38,10 @@ type Server struct {
 	replays      map[string]*Replay  // recent bot-match recordings
 	replayOrder  []string            // replay IDs, oldest first
 	secureCookie bool                // mark the login cookie Secure; turn on when served over HTTPS
-	botFill      int                 // room size that bots fill up to when a match starts; 0 for no bots
+	trustProxy   bool                // read the caller's address from X-Forwarded-For; on behind a reverse proxy
+	limits       *limiter            // nil turns rate limits off
+	reports      *reportLog
+	botFill      int // room size that bots fill up to when a match starts; 0 for no bots
 }
 
 // defaultBotFill is the room size bots fill up to unless ARENA_BOT_FILL says otherwise.
@@ -56,6 +60,7 @@ type inputMsg struct {
 	Switch int     `json:"switch"`
 	Revive bool    `json:"revive"`
 	Buy    int     `json:"buy"`
+	TS     float64 `json:"ts"`
 }
 
 func (s *Server) get(id string) *Match {
@@ -80,6 +85,10 @@ func (s *Server) sweepClosed(ctx context.Context) {
 				}
 			}
 			s.mu.Unlock()
+			s.store.PruneAnonymous(time.Now().Add(-anonymousTTL))
+			if s.limits != nil {
+				s.limits.sweep()
+			}
 		}
 	}
 }
@@ -138,16 +147,23 @@ func (s *Server) index(w http.ResponseWriter, r *http.Request) {
 		Skin       []lookChoice
 		Shirt      []lookChoice
 		Hat        []lookChoice
+		Devices    int
+		Blocked    []string
+		Reasons    []string
 	}{
 		acc.Name, acc.Verified, acc.Friends, level, into, need, into * 100 / need, acc.Matches, acc.Wins, acc.Kills,
 		acc.Trophies, acc.DailyReady(time.Now()), dailyXP,
 		lookChoices(hairOptions, acc.Look.Hair, level), lookChoices(skinOptions, acc.Look.Skin, level),
 		lookChoices(shirtOptions, acc.Look.Shirt, level), lookChoices(hatOptions, acc.Look.Hat, level),
+		len(acc.Devices) + 1, acc.Blocked, []string{"cheating", "offensive name", "abusive behaviour", "other"},
 	})
 }
 
 // claimDaily gives the once-a-day XP bonus.
 func (s *Server) claimDaily(w http.ResponseWriter, r *http.Request) {
+	if s.limited(w, r, "daily", 10, time.Minute) {
+		return
+	}
 	if _, err := s.store.ClaimDaily(sessionFrom(r).token, time.Now()); err != nil {
 		if errors.Is(err, ErrDailyClaimed) {
 			http.Error(w, err.Error(), http.StatusConflict)
@@ -162,6 +178,9 @@ func (s *Server) claimDaily(w http.ResponseWriter, r *http.Request) {
 
 // saveLook stores the avatar chosen in the lobby.
 func (s *Server) saveLook(w http.ResponseWriter, r *http.Request) {
+	if s.limited(w, r, "look", 20, time.Minute) {
+		return
+	}
 	num := func(k string) int {
 		n, err := strconv.Atoi(r.FormValue(k))
 		if err != nil {
@@ -229,6 +248,9 @@ var roomSizes = map[int]bool{2: true, 4: true, 8: true, 12: true, 16: true}
 // createMatch makes a custom room from the lobby form: size, team mode, bots, and privacy.
 // Missing or invalid fields fall back to the defaults: 8 players, automatic teams, bots on, public.
 func (s *Server) createMatch(w http.ResponseWriter, r *http.Request) {
+	if s.limited(w, r, "room", 12, time.Minute) {
+		return
+	}
 	if !requirePlayer(w, r) {
 		return
 	}
@@ -267,6 +289,9 @@ func (s *Server) createMatch(w http.ResponseWriter, r *http.Request) {
 
 // joinByNumber joins a room from its six-digit number, which is how private rooms are shared.
 func (s *Server) joinByNumber(w http.ResponseWriter, r *http.Request) {
+	if s.limited(w, r, "join", 30, time.Minute) {
+		return
+	}
 	if !requirePlayer(w, r) {
 		return
 	}
@@ -393,6 +418,7 @@ func (s *Server) serveWS(w http.ResponseWriter, r *http.Request) {
 			Switch: in.Switch,
 			Revive: in.Revive,
 			Buy:    in.Buy,
+			Echo:   in.TS,
 		})
 	}
 }
@@ -436,7 +462,7 @@ func newServer(storePath string, mailer Mailer) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Server{matches: map[string]*Match{}, tmpl: tmpl, store: store, mailer: mailer, invites: map[string][]invite{}, botFill: defaultBotFill, replays: map[string]*Replay{}}, nil
+	return &Server{matches: map[string]*Match{}, tmpl: tmpl, store: store, mailer: mailer, invites: map[string][]invite{}, botFill: defaultBotFill, replays: map[string]*Replay{}, reports: &reportLog{}}, nil
 }
 
 func newMux(s *Server) (http.Handler, error) {
@@ -449,6 +475,14 @@ func newMux(s *Server) (http.Handler, error) {
 	mux.HandleFunc("POST /profile/name", s.setName)
 	mux.HandleFunc("POST /auth/email", s.sendCode)
 	mux.HandleFunc("POST /auth/otp", s.verifyCode)
+	mux.HandleFunc("POST /auth/login/email", s.loginEmail)
+	mux.HandleFunc("POST /auth/login/otp", s.loginCode)
+	mux.HandleFunc("POST /auth/signout", s.signOut)
+	mux.HandleFunc("POST /auth/signout-others", s.signOutOthers)
+	mux.HandleFunc("POST /friends/remove", s.removeFriend)
+	mux.HandleFunc("POST /block", s.blockPlayer)
+	mux.HandleFunc("POST /unblock", s.unblockPlayer)
+	mux.HandleFunc("POST /reports", s.reportPlayer)
 	mux.HandleFunc("GET /friends", s.friendsList)
 	mux.HandleFunc("GET /invites", s.invitesList)
 	mux.HandleFunc("POST /invites", s.sendInvite)
@@ -495,6 +529,16 @@ func main() {
 	}
 	go s.sweepClosed(context.Background())
 	s.secureCookie = os.Getenv("ARENA_SECURE_COOKIE") == "1"
+	s.trustProxy = os.Getenv("ARENA_TRUST_PROXY") == "1"
+	s.limits = newLimiter()
+	s.reports.path = filepath.Join(filepath.Dir(dataPath), "arena-reports.jsonl")
+	every, keep, err := backupSettings()
+	if err != nil {
+		log.Fatal(err)
+	}
+	if every > 0 {
+		go s.runBackups(filepath.Join(filepath.Dir(dataPath), "backups"), every, keep)
+	}
 	addr := os.Getenv("ARENA_ADDR")
 	if addr == "" {
 		addr = ":8080"

@@ -167,6 +167,9 @@ func SimulateBotMatch(id string, bots int, mode string) *Replay {
 
 // recordBotMatch plays a bot match and opens its replay.
 func (s *Server) recordBotMatch(w http.ResponseWriter, r *http.Request) {
+	if s.limited(w, r, "replay", 4, time.Minute) {
+		return
+	}
 	if !requirePlayer(w, r) {
 		return
 	}

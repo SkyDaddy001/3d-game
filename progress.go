@@ -101,9 +101,9 @@ func checkLook(l Look, level int) error {
 
 // SetLook saves a device's avatar look, if every item is unlocked at the account's level.
 func (s *Store) SetLook(token string, l Look) error {
-	h := hashToken(token)
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	h := s.keyLocked(token)
 	a, ok := s.accounts[h]
 	if !ok {
 		return ErrUnknown
@@ -118,10 +118,10 @@ func (s *Store) SetLook(token string, l Look) error {
 
 // ClaimDaily gives the once-a-day XP bonus. Days are counted in UTC.
 func (s *Store) ClaimDaily(token string, now time.Time) (int, error) {
-	h := hashToken(token)
 	day := now.Unix() / 86400
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	h := s.keyLocked(token)
 	a, ok := s.accounts[h]
 	if !ok {
 		return 0, ErrUnknown

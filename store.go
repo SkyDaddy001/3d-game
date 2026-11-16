@@ -10,6 +10,7 @@ import (
 	"math"
 	"os"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -50,6 +51,9 @@ type Account struct {
 	Trophies     int      `json:"trophies"`
 	DailyDay     int64    `json:"daily_day,omitempty"` // UTC day number of the last daily reward
 	Look         Look     `json:"look"`
+	Devices      []string `json:"devices,omitempty"` // token hashes of other devices signed in to this account
+	Blocked      []string `json:"blocked,omitempty"` // usertags this player has blocked
+	LoginTarget  string   `json:"-"`                 // on a new device: the account a sign-in code was sent for
 }
 
 // Store holds all accounts. Methods return copies, so callers never share state with it.
@@ -59,6 +63,7 @@ type Store struct {
 	accounts map[string]*Account // keyed by token hash
 	names    map[string]string   // lowercase usertag -> token hash
 	emails   map[string]string   // email hash -> token hash, verified accounts only
+	devices  map[string]string   // token hash of an extra device -> key of its account
 }
 
 // OpenStore loads accounts from path. A missing file means a new, empty store.
@@ -68,6 +73,7 @@ func OpenStore(path string) (*Store, error) {
 		accounts: map[string]*Account{},
 		names:    map[string]string{},
 		emails:   map[string]string{},
+		devices:  map[string]string{},
 	}
 	if path == "" {
 		return s, nil
@@ -91,6 +97,9 @@ func OpenStore(path string) (*Store, error) {
 		if a.Verified {
 			s.emails[a.EmailHash] = a.TokenHash
 		}
+		for _, d := range a.Devices {
+			s.devices[d] = a.TokenHash
+		}
 	}
 	return s, nil
 }
@@ -101,10 +110,15 @@ func (s *Store) saveLocked() error {
 	if s.path == "" {
 		return nil
 	}
+	// Devices that have not chosen a usertag yet are kept in memory only, so visitors who never
+	// sign up cannot grow the file.
 	list := make([]*Account, 0, len(s.accounts))
 	for _, a := range s.accounts {
-		list = append(list, a)
+		if a.Name != "" {
+			list = append(list, a)
+		}
 	}
+	sort.Slice(list, func(i, j int) bool { return list[i].Name < list[j].Name })
 	data, err := json.MarshalIndent(list, "", "  ")
 	if err != nil {
 		return err
@@ -132,11 +146,8 @@ func (s *Store) NewDevice() (string, Account, error) {
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	// Not saved yet: a device is written to disk once it has a usertag.
 	s.accounts[a.TokenHash] = a
-	if err := s.saveLocked(); err != nil {
-		delete(s.accounts, a.TokenHash)
-		return "", Account{}, err
-	}
 	return token, copyAccount(a), nil
 }
 
@@ -147,7 +158,7 @@ func (s *Store) ByToken(token string) (Account, bool) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	a, ok := s.accounts[hashToken(token)]
+	a, ok := s.accounts[s.keyLocked(token)]
 	if !ok {
 		return Account{}, false
 	}
@@ -158,6 +169,8 @@ func (s *Store) ByToken(token string) (Account, bool) {
 func copyAccount(a *Account) Account {
 	c := *a
 	c.Friends = append([]string(nil), a.Friends...)
+	c.Devices = append([]string(nil), a.Devices...)
+	c.Blocked = append([]string(nil), a.Blocked...)
 	return c
 }
 
@@ -166,11 +179,14 @@ func (s *Store) SetName(token, name string) (Account, error) {
 	if !nameRE.MatchString(name) {
 		return Account{}, ErrNameInvalid
 	}
+	if nameBlocked(name) {
+		return Account{}, ErrNameBlocked
+	}
 	key := strings.ToLower(name)
-	h := hashToken(token)
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	h := s.keyLocked(token)
 	a, ok := s.accounts[h]
 	if !ok {
 		return Account{}, ErrUnknown

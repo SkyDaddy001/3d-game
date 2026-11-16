@@ -6,6 +6,7 @@ import (
 	"math/rand"
 	"net/http"
 	"strings"
+	"time"
 )
 
 // invite is a pending friend invitation to a match. Invites live in memory and expire when the
@@ -18,6 +19,9 @@ type invite struct {
 // quickMatch puts the player into the first open match, or creates one. Teammates are assigned at
 // random when the match starts.
 func (s *Server) quickMatch(w http.ResponseWriter, r *http.Request) {
+	if s.limited(w, r, "quick", 30, time.Minute) {
+		return
+	}
 	if !requirePlayer(w, r) {
 		return
 	}
@@ -45,6 +49,9 @@ func (s *Server) quickMatch(w http.ResponseWriter, r *http.Request) {
 
 // sendInvite invites a friend to a waiting match. Only friends can be invited.
 func (s *Server) sendInvite(w http.ResponseWriter, r *http.Request) {
+	if s.limited(w, r, "invite", 20, time.Minute) {
+		return
+	}
 	if !requirePlayer(w, r) {
 		return
 	}
@@ -61,10 +68,13 @@ func (s *Server) sendInvite(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "match unavailable", http.StatusConflict)
 		return
 	}
-	s.mu.Lock()
-	key := strings.ToLower(target)
-	s.invites[key] = append(s.invites[key], invite{MatchID: id, From: me.Name})
-	s.mu.Unlock()
+	// If the friend has blocked this player the invite is dropped, with the same answer.
+	if !s.store.HasBlocked(target, me.Name) {
+		s.mu.Lock()
+		key := strings.ToLower(target)
+		s.invites[key] = append(s.invites[key], invite{MatchID: id, From: me.Name})
+		s.mu.Unlock()
+	}
 	fmt.Fprintf(w, "Invite sent to %s.", html.EscapeString(target))
 }
 

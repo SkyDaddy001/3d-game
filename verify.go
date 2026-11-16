@@ -66,11 +66,11 @@ func (s *Store) BeginVerify(token, email string) (code, addr string, err error) 
 	if err != nil {
 		return "", "", err
 	}
-	h := hashToken(token)
 	emailHash := hashWith("email", addr)
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	h := s.keyLocked(token)
 	a, ok := s.accounts[h]
 	if !ok {
 		return "", "", ErrUnknown
@@ -102,10 +102,10 @@ func (s *Store) BeginVerify(token, email string) (code, addr string, err error) 
 
 // CheckOTP confirms the code. On success the account is verified and the email is locked to it.
 func (s *Store) CheckOTP(token, code string) error {
-	h := hashToken(token)
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	h := s.keyLocked(token)
 	a, ok := s.accounts[h]
 	if !ok {
 		return ErrUnknown
@@ -138,10 +138,10 @@ func (s *Store) CheckOTP(token, code string) error {
 
 // AddFriend adds another player by usertag. Friendships are mutual and added at once.
 func (s *Store) AddFriend(token, usertag string) error {
-	h := hashToken(token)
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	h := s.keyLocked(token)
 	a, ok := s.accounts[h]
 	if !ok {
 		return ErrUnknown
@@ -157,6 +157,10 @@ func (s *Store) AddFriend(token, usertag string) error {
 		return ErrSelf
 	}
 	other := s.accounts[otherHash]
+	// A block hides each player from the other: the answer is the same as for an unknown usertag.
+	if contains(a.Blocked, other.Name) || contains(other.Blocked, a.Name) {
+		return ErrNoUser
+	}
 	if contains(a.Friends, other.Name) {
 		return ErrAlreadyFriend
 	}

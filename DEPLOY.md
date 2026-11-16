@@ -51,6 +51,9 @@ Put Caddy (or any HTTPS reverse proxy) in front, as in option A. With Docker, se
 | `ARENA_SECURE_COOKIE` | Set to `1` when the site is on HTTPS. |
 | `ARENA_BOT_FILL` | Room size bots fill to. `0` turns bots off. |
 | `ARENA_SMTP_*` | Email server for sign-in codes (see `deploy/arena.env.example`). |
+| `ARENA_TRUST_PROXY` | Set to `1` behind a reverse proxy you control, so rate limits use each player's address. |
+| `ARENA_BACKUP_HOURS`, `ARENA_BACKUP_KEEP` | How often the accounts file is backed up (default 6 hours; 0 is off) and how many copies to keep (default 28). |
+| `ARENA_BLOCKED_NAMES` | Optional file of extra words to refuse in usertags, one per line. |
 | `ARENA_DEV_MAIL` | `1` prints codes to the log. Development only; never on a public server. |
 
 ## Before inviting players
@@ -62,3 +65,23 @@ Put Caddy (or any HTTPS reverse proxy) in front, as in option A. With Docker, se
   One process on one machine is the limit until accounts move to a database.
 - `go.sum` was created without the checksum database in the build sandbox. Run
   `go mod verify` once on a normal connection to confirm the dependency.
+
+## Files the server writes
+
+All of these sit next to the accounts file (`ARENA_DATA`):
+
+- `arena-data.json`: every named account. Visitors who never choose a usertag are not saved.
+- `backups/arena-data-<date>-<time>.json`: timestamped copies. To restore one, stop the server,
+  copy the backup over `arena-data.json`, and start it again.
+- `arena-reports.jsonl`: player reports, one per line. Read it with `tail` or `jq`; nothing acts
+  on reports automatically.
+
+Backups on the same disk do not protect against losing the server. Copy the `backups` folder
+somewhere else on a schedule (for example to object storage).
+
+## What one server can carry
+
+Measured on a 2.1 GHz Xeon core: a full 16-player room uses about 1% of one core, and each player
+receives roughly 0.3 to 0.4 Mbit/s. Bandwidth is the limit, not CPU: 100 players online around
+the clock is about 35 Mbit/s, or roughly 11 TB a month.
+

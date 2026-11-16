@@ -123,6 +123,9 @@ type Player struct {
 	credits    int
 	look       string // avatar look code shown to other players
 	wantBuy    int
+	lootSig    uint64  // signature of the pickup list last delivered to this player
+	obstSig    uint64  // signature of the obstacle list last delivered
+	echo       float64 // client clock value from the latest input, echoed back for ping
 	kills      int     // eliminations credited to this player
 	damage     float64 // total damage dealt to enemies
 	send       chan []byte
@@ -138,6 +141,7 @@ type Controls struct {
 	Switch      int // 1-based weapon slot, zero for none
 	Revive      bool
 	Buy         int // 1-based weapon slot to buy, or to refill if already owned; zero for none
+	Echo        float64
 }
 
 type Point struct {
@@ -211,16 +215,19 @@ type Zone struct {
 }
 
 type Snapshot struct {
-	T         string       `json:"t"`
-	Started   bool         `json:"started"`
-	Over      bool         `json:"over"`
-	Winner    string       `json:"winner"`
-	Alive     int          `json:"alive"`
-	Zone      Zone         `json:"zone"`
-	Me        PlayerView   `json:"me"`
-	Players   []PlayerView `json:"players"`
-	Loot      []Loot       `json:"loot"`
-	Obstacles []Rect       `json:"obstacles"`
+	T       string       `json:"t"`
+	Started bool         `json:"started"`
+	Over    bool         `json:"over"`
+	Winner  string       `json:"winner"`
+	Alive   int          `json:"alive"`
+	Zone    Zone         `json:"zone"`
+	Me      PlayerView   `json:"me"`
+	Players []PlayerView `json:"players"`
+	// Loot and Obstacles are sent only when the set near the player changes; a snapshot without
+	// them means "same as before". This keeps snapshots small.
+	Loot      *[]Loot      `json:"loot,omitempty"`
+	Obstacles *[]Rect      `json:"obstacles,omitempty"`
+	Echo      float64      `json:"echo,omitempty"` // the client clock value from its latest input, for measuring ping
 	Events    []string     `json:"events"`
 	Revealed  []PlayerView `json:"revealed"`
 	Pings     []Ping       `json:"pings"`
@@ -493,6 +500,7 @@ func (m *Match) Input(p *Player, c Controls) {
 	if c.Buy > 0 {
 		p.wantBuy = c.Buy
 	}
+	p.echo = c.Echo
 }
 
 func (m *Match) Start() bool {
@@ -1201,7 +1209,7 @@ func (m *Match) broadcast() {
 		snap := Snapshot{
 			T: "state", Started: m.started, Over: m.over, Winner: m.winner,
 			Alive: alive, Zone: z, Me: me.view(),
-			Players: []PlayerView{}, Loot: []Loot{}, Obstacles: []Rect{},
+			Players: []PlayerView{}, Echo: me.echo,
 			Events: append([]string{}, m.events...), Revealed: []PlayerView{},
 			Pings: []Ping{}, HitSeq: me.hitSeq, HitKind: me.hitKind, Ammo: me.ammoView(),
 			Ranked: m.Ranked,
@@ -1231,19 +1239,31 @@ func (m *Match) broadcast() {
 				snap.Pings = append(snap.Pings, pg)
 			}
 		}
+		loot, lootSig := []Loot{}, uint64(1)
 		for _, l := range m.loot {
 			if math.Hypot(me.X-l.X, me.Y-l.Y) <= aoiRadius {
-				snap.Loot = append(snap.Loot, *l)
+				loot = append(loot, *l)
+				lootSig += uint64(l.ID)*2654435761 + 1
 			}
 		}
+		obstacles, obstSig := []Rect{}, uint64(1)
 		for _, r := range m.obstacles {
 			if math.Hypot(me.X-(r.X+r.W/2), me.Y-(r.Y+r.H/2)) <= aoiRadius+200 {
-				snap.Obstacles = append(snap.Obstacles, r)
+				obstacles = append(obstacles, r)
+				obstSig += uint64(int64(r.X*8))*73856093 ^ uint64(int64(r.Y*8))*19349663 + 1
 			}
+		}
+		if lootSig != me.lootSig {
+			snap.Loot = &loot
+		}
+		if obstSig != me.obstSig {
+			snap.Obstacles = &obstacles
 		}
 		msg, _ := json.Marshal(snap)
 		select {
 		case me.send <- msg:
+			// Only now does the client have these lists; a dropped snapshot must be sent again.
+			me.lootSig, me.obstSig = lootSig, obstSig
 		default: // slow client: drop this snapshot, the next one supersedes it
 		}
 	}

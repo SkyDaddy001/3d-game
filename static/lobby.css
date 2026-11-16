@@ -96,3 +96,8 @@ label.check input { flex: none; width: 20px; height: 20px; padding: 0; }
 .lookrow select { margin-top: 0; padding: 7px 10px; }
 .row-item .small { white-space: nowrap; }
 .pill.trophy { white-space: nowrap; }
+button.mini { padding: 5px 12px; border-radius: 10px; font-size: 13px; background: #e8edf7; box-shadow: 0 2px 0 rgba(0,0,0,0.18); }
+ul.friends li { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+form .row { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 8px; }
+form .row select { width: auto; flex: 1; margin-top: 0; }
+

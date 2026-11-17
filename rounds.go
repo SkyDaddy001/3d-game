@@ -86,6 +86,7 @@ func (m *Match) startRound() {
 		p.Alive, p.HP, p.downed, p.Place = true, 100, false, 0
 		p.bleed, p.reviveProg, p.hurtCool, p.bloom, p.reloadLeft, p.revealLeft = 0, 0, 0, 0, 0, 0
 		p.DX, p.DY, p.wantShoot = 0, 0, false
+		p.Z, p.vz, p.crouch, p.wantJump = 0, 0, false, false
 		side := -1.0
 		if p.Team == 2 {
 			side = 1.0

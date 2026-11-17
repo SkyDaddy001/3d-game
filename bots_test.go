@@ -138,6 +138,12 @@ func TestDownedOnlyWithATeammateStanding(t *testing.T) {
 		t.Fatal("with a teammate standing, the first lethal hit should down the target")
 	}
 	m.fire(shooter)
+	if !target.Alive {
+		t.Fatal("a level shot should pass over a player lying on the ground")
+	}
+	shooter.Pitch = pitchTo(shooter, target) // aim down at them
+	shooter.bloom = 0
+	m.fire(shooter)
 	if target.Alive {
 		t.Fatal("a second lethal hit should eliminate the downed target")
 	}

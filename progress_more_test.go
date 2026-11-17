@@ -125,7 +125,8 @@ func TestLobbyPagesForProgress(t *testing.T) {
 func TestCrateBreaksAndDropsLoot(t *testing.T) {
 	m := newArena()
 	m.obstacles = []Rect{{X: 100, Y: 41, W: crateSize, H: crateSize, K: "crate", HP: crateHP}}
-	shooter := &Player{ID: 1, Name: "a", Team: 1, X: 0, Y: 50, Alive: true, HP: 100, Aim: 0}
+	// The shooter crouches: a small crate is low, and a standing player's shots pass over it.
+	shooter := &Player{ID: 1, Name: "a", Team: 1, X: 0, Y: 50, Alive: true, HP: 100, Aim: 0, crouch: true}
 	behind := &Player{ID: 2, Name: "b", Team: 2, X: 200, Y: 50, Alive: true, HP: 100}
 	m.players[1], m.players[2] = shooter, behind
 

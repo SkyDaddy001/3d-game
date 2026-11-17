@@ -126,6 +126,11 @@ type Player struct {
 	lootSig    uint64  // signature of the pickup list last delivered to this player
 	obstSig    uint64  // signature of the obstacle list last delivered
 	echo       float64 // client clock value from the latest input, echoed back for ping
+	Pitch      float64 // up or down aim in radians; positive is up
+	Z          float64 // height of the feet above the ground while jumping
+	vz         float64
+	crouch     bool
+	wantJump   bool
 	kills      int     // eliminations credited to this player
 	damage     float64 // total damage dealt to enemies
 	send       chan []byte
@@ -142,6 +147,9 @@ type Controls struct {
 	Revive      bool
 	Buy         int // 1-based weapon slot to buy, or to refill if already owned; zero for none
 	Echo        float64
+	Pitch       float64
+	Crouch      bool
+	Jump        bool
 }
 
 type Point struct {
@@ -205,6 +213,8 @@ type PlayerView struct {
 	Aim    float64 `json:"aim"`
 	Kills  int     `json:"kills"`
 	Look   string  `json:"look,omitempty"` // avatar look code; empty for the default look
+	Crouch bool    `json:"crouch,omitempty"`
+	Z      float64 `json:"z,omitempty"` // height above the ground while jumping
 	Bleed  float64 `json:"bleed"`
 }
 
@@ -501,6 +511,11 @@ func (m *Match) Input(p *Player, c Controls) {
 		p.wantBuy = c.Buy
 	}
 	p.echo = c.Echo
+	p.Pitch = clamp(c.Pitch, -maxPitch, maxPitch)
+	p.crouch = c.Crouch
+	if c.Jump {
+		p.wantJump = true
+	}
 }
 
 func (m *Match) Start() bool {
@@ -667,7 +682,7 @@ func (m *Match) step(dt float64) {
 	if frozen {
 		// Buy phase and the pause between rounds: shopping works, moving and shooting do not.
 		for _, p := range m.players {
-			p.DX, p.DY, p.wantShoot, p.wantRevive = 0, 0, false, false
+			p.DX, p.DY, p.wantShoot, p.wantRevive, p.wantJump = 0, 0, false, false, false
 		}
 	}
 
@@ -676,6 +691,7 @@ func (m *Match) step(dt float64) {
 			continue
 		}
 		if p.downed {
+			p.crouch, p.Z, p.vz, p.wantJump = false, 0, 0, false
 			p.DX, p.DY = 0, 0
 			p.wantShoot, p.wantPing, p.wantReload = false, false, false
 			p.switchTo = 0
@@ -689,8 +705,13 @@ func (m *Match) step(dt float64) {
 			}
 			continue
 		}
-		nx := clamp(p.X+p.DX*moveSpeed*dt, 0, worldSize)
-		ny := clamp(p.Y+p.DY*moveSpeed*dt, 0, worldSize)
+		speed := moveSpeed
+		if p.crouch {
+			speed *= crouchSpeed
+		}
+		p.updateStance(dt)
+		nx := clamp(p.X+p.DX*speed*dt, 0, worldSize)
+		ny := clamp(p.Y+p.DY*speed*dt, 0, worldSize)
 		// Slide along obstacles: try each axis independently.
 		if !m.blocked(nx, p.Y) {
 			p.X = nx
@@ -852,30 +873,8 @@ func (m *Match) shrinkZone() {
 
 // rayRect returns the distance along the ray at which it first enters r.
 func rayRect(ox, oy, dx, dy float64, r Rect) (float64, bool) {
-	tmin, tmax := 0.0, math.Inf(1)
-	axes := [2][4]float64{
-		{ox, dx, r.X, r.X + r.W},
-		{oy, dy, r.Y, r.Y + r.H},
-	}
-	for _, ax := range axes {
-		o, d, lo, hi := ax[0], ax[1], ax[2], ax[3]
-		if math.Abs(d) < 1e-9 {
-			if o < lo || o > hi {
-				return 0, false
-			}
-			continue
-		}
-		t1, t2 := (lo-o)/d, (hi-o)/d
-		if t1 > t2 {
-			t1, t2 = t2, t1
-		}
-		tmin = math.Max(tmin, t1)
-		tmax = math.Min(tmax, t2)
-		if tmin > tmax {
-			return 0, false
-		}
-	}
-	return tmin, true
+	enter, _, ok := rayRectSpan(ox, oy, dx, dy, r)
+	return enter, ok
 }
 
 // ensureAmmo fills a player's magazines and reserves the first time they are needed.
@@ -999,8 +998,13 @@ func (m *Match) fire(p *Player) {
 
 	hitAny, hitHead := false, false
 	for i := 0; i < w.Pellets; i++ {
-		spread := (rand.Float64()*2 - 1) * (w.Spread + p.bloom)
-		hit, head := m.shootRay(p, p.Aim+spread, w.Range, w.Damage, w.HeadDamage)
+		wobble := w.Spread + p.bloom
+		if p.crouch {
+			wobble *= crouchAim
+		}
+		spread := (rand.Float64()*2 - 1) * wobble
+		rise := (rand.Float64()*2 - 1) * wobble * 0.5
+		hit, head := m.shootRay(p, p.Aim+spread, p.Pitch+rise, w.Range, w.Damage, w.HeadDamage)
 		hitAny = hitAny || hit
 		hitHead = hitHead || head
 	}
@@ -1016,11 +1020,15 @@ func (m *Match) fire(p *Player) {
 
 // shootRay traces one ray. Obstacles stop it, teammates are passed through, and the nearest
 // enemy in line takes damage. It reports whether a player was hit and whether it was a headshot.
-func (m *Match) shootRay(p *Player, angle, reach, dmg, headDmg float64) (bool, bool) {
+func (m *Match) shootRay(p *Player, angle, pitch, reach, dmg, headDmg float64) (bool, bool) {
 	dx, dy := math.Cos(angle), math.Sin(angle)
+	h0, slope := p.eye(), math.Tan(pitch)
+	if slope < 0 { // aiming down: the shot ends where it meets the ground
+		reach = math.Min(reach, h0/-slope)
+	}
 	wall, wallAt := reach, -1
 	for i, r := range m.obstacles {
-		if t, ok := rayRect(p.X, p.Y, dx, dy, r); ok && t < wall {
+		if t, ok := rayStopped(p.X, p.Y, dx, dy, h0, slope, r); ok && t < wall {
 			wall, wallAt = t, i
 		}
 	}
@@ -1038,10 +1046,13 @@ func (m *Match) shootRay(p *Player, angle, reach, dmg, headDmg float64) (bool, b
 			continue
 		}
 		perp := math.Abs(vx*dy - vy*dx)
-		if perp <= playerRadius {
+		// Where the shot is, measured up from the target's feet, when it reaches them.
+		at := h0 + slope*t - q.Z
+		if perp <= playerRadius && at >= 0 && at <= q.bodyTop() {
 			target, best = q, t
-			// Bots never score headshots: an instant kill from a computer feels unfair.
-			targetHead = perp <= headRadius && p.bot == nil
+			// A headshot is centred and lands in the head. Bots never score one: an instant
+			// kill from a computer feels unfair.
+			targetHead = perp <= headRadius && at >= q.headFrom() && p.bot == nil
 		}
 	}
 	if target == nil {
@@ -1188,7 +1199,7 @@ func (p *Player) view() PlayerView {
 		Weapon: weapons[p.weapon].Name,
 		ID:     p.ID, Name: p.Name, Team: p.Team, X: p.X, Y: p.Y,
 		HP: p.HP, Alive: p.Alive, Place: p.Place, Bloom: p.bloom,
-		Downed: p.downed, Bleed: p.bleed, Aim: p.Aim, Kills: p.kills, Look: p.look,
+		Downed: p.downed, Bleed: p.bleed, Aim: p.Aim, Kills: p.kills, Look: p.look, Crouch: p.crouch && !p.downed, Z: math.Round(p.Z*10) / 10,
 	}
 }
 

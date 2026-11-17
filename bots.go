@@ -114,7 +114,7 @@ func (m *Match) thinkBots(dt float64) {
 				continue
 			}
 			d := math.Hypot(q.X-p.X, q.Y-p.Y)
-			if d < best && m.clearLine(p.X, p.Y, q.X, q.Y) {
+			if d < best && m.canSee(p, q) {
 				target, best = q, d
 			}
 		}
@@ -125,6 +125,7 @@ func (m *Match) thinkBots(dt float64) {
 		if target != nil {
 			aim := math.Atan2(target.Y-p.Y, target.X-p.X)
 			p.Aim = aim + rand.NormFloat64()*botAimError
+			p.Pitch = pitchTo(p, target) + rand.NormFloat64()*botAimError*0.4
 			b.seen += dt
 			if b.seen >= botReact && m.elapsed >= botGrace {
 				// Tap the trigger: pressed for part of each cycle, so every weapon type fires.
@@ -166,7 +167,7 @@ func (m *Match) thinkBots(dt float64) {
 				gx, gy = p.X+math.Cos(b.wanderA)*100, p.Y+math.Sin(b.wanderA)*100
 			}
 			a := math.Atan2(gy-p.Y, gx-p.X)
-			p.Aim = a
+			p.Aim, p.Pitch = a, 0
 			if math.Hypot(gx-p.X, gy-p.Y) > 8 {
 				mx, my = math.Cos(a), math.Sin(a)
 			}

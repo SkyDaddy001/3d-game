@@ -61,6 +61,9 @@ type inputMsg struct {
 	Revive bool    `json:"revive"`
 	Buy    int     `json:"buy"`
 	TS     float64 `json:"ts"`
+	Pitch  float64 `json:"pitch"`
+	Crouch bool    `json:"crouch"`
+	Jump   bool    `json:"jump"`
 }
 
 func (s *Server) get(id string) *Match {
@@ -419,6 +422,9 @@ func (s *Server) serveWS(w http.ResponseWriter, r *http.Request) {
 			Revive: in.Revive,
 			Buy:    in.Buy,
 			Echo:   in.TS,
+			Pitch:  in.Pitch,
+			Crouch: in.Crouch,
+			Jump:   in.Jump,
 		})
 	}
 }

@@ -250,3 +250,15 @@ inputs the server has not answered yet. The server still decides every position.
 Add `?lag=150` to a match address to delay everything sent and received by that many
 milliseconds and feel a slow connection.
 
+
+## Height: aiming up and down, crouching, jumping
+
+- The mouse (or a touch drag) now aims up and down as well as left and right.
+- A shot is a line from the shooter's eyes. Where it lands on the body decides the damage: a
+  centred shot in the head is a headshot; too high goes over, too low hits the ground.
+- **Crouch** (hold C or Ctrl; CROUCH button on touch): a smaller target, slower movement, and
+  steadier aim. **Jump** (Space; JUMP button on touch). Fire moved from Space to the mouse or F.
+- Cover has height. A small crate hides a crouching player but not a standing one's head; medium
+  and large crates and containers hide a standing player; buildings and trees block everything.
+- A downed player lies flat, so you must aim down to finish them.
+- Bots aim up and down, and cannot see over cover that is taller than their eyes.

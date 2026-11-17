@@ -9,7 +9,8 @@ import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 // World units match the server: x and y span 0..2000 on the ground plane.
 // Three.js uses Y as up, so server (x, y) maps to scene (x, height, z = y).
 const { id } = window.MATCH;
-const EYE = 27;
+const EYE = 30, CROUCH_EYE = 16;                 // must match height.go
+const JUMP_SPEED = 78, GRAVITY = 220, CROUCH_SPEED = 0.55, MAX_PITCH = 1.2;
 const TICK_MS = 1000 / 30;
 const REPLAY = !!window.MATCH.replay;                              // spectating a recording
 const CAPTURE = new URLSearchParams(location.search).has('capture'); // frames are stepped from outside
@@ -343,8 +344,9 @@ function makeContainer(r) {
 
 function makeCrate(r) {
   const m = new THREE.Mesh(crateGeo, matCrate);
-  m.scale.set(r.w, r.w, r.h);
-  m.position.set(r.x + r.w / 2, r.w / 2, r.y + r.h / 2);
+  const tall = r.w + 8; // matches the server: a crate is a little taller than it is wide
+  m.scale.set(r.w, tall, r.h);
+  m.position.set(r.x + r.w / 2, tall / 2, r.y + r.h / 2);
   m.rotation.y = 0;
   m.castShadow = true;
   m.receiveShadow = true;
@@ -629,6 +631,9 @@ function animateAvatar(root, p, speed, dt, now, mate) {
   u.down = lerp(u.down, p.downed ? 1 : 0, Math.min(1, dt * 8));
   u.body.rotation.x = lerp(0.14 * run, -Math.PI / 2, u.down);
   u.body.position.y = lerp(Math.abs(Math.sin(u.phase)) * 1.4 * run, 4, u.down);
+  // Crouching squashes the body to two thirds of its height.
+  u.squat = lerp(u.squat ?? 0, p.crouch ? 1 : 0, Math.min(1, dt * 14));
+  u.body.scale.y = 1 - 0.33 * u.squat;
 
   // Blink: the eyes squash shut for a moment every few seconds.
   if (now > u.blinkAt + 130) u.blinkAt = now + 2200 + Math.random() * 2600;
@@ -746,6 +751,8 @@ const RELOAD = { x: 0, y: 0, r: 34, hit: 42 };
 const SWAP = { x: 0, y: 0, r: 30, hit: 38 };
 const REVIVE_BTN = { x: 0, y: 0, r: 34, hit: 42 };
 const SHOP_BTN = { x: 0, y: 0, r: 30, hit: 38 };
+const JUMP_BTN = { x: 0, y: 0, r: 34, hit: 42 };
+const CROUCH_BTN = { x: 0, y: 0, r: 34, hit: 42 };
 
 let VW = innerWidth, VH = innerHeight;
 function resize() {
@@ -763,6 +770,8 @@ function resize() {
   SWAP.x = innerWidth - 110; SWAP.y = innerHeight - 220;
   REVIVE_BTN.x = innerWidth - 230; REVIVE_BTN.y = innerHeight - 220;
   SHOP_BTN.x = innerWidth - 110; SHOP_BTN.y = innerHeight - 310;
+  JUMP_BTN.x = innerWidth - 340; JUMP_BTN.y = innerHeight - 165;
+  CROUCH_BTN.x = innerWidth - 340; CROUCH_BTN.y = innerHeight - 75;
 }
 addEventListener('resize', resize);
 resize();
@@ -778,6 +787,16 @@ let pendingPing = null;
 let pendingReload = false;
 let pendingSwitch = 0;
 let pendingBuy = 0;
+let pitch = 0;            // up or down aim, in radians; positive is up
+let crouchToggle = false; // touch: the crouch button stays on until tapped again
+let pendingJump = false;
+let jumpZ = 0, jumpV = 0; // the local player's jump, shown at once and decided by the server
+const isCrouching = () => keys.has('c') || keys.has('control') || crouchToggle;
+function tryJump() {
+  if (!canMove() || isCrouching() || jumpZ > 0) return;
+  pendingJump = true;
+  jumpV = JUMP_SPEED;
+}
 let reviveTouched = false;
 const pointers = new Map();
 
@@ -795,8 +814,9 @@ function nextOwned(dir) {
 addEventListener('keydown', e => {
   ensureAudio();
   const k = e.key.toLowerCase();
-  if (e.repeat && k !== ' ') return;
+  if (e.repeat) return;
   keys.add(k);
+  if (k === ' ') { e.preventDefault(); if (!REPLAY) tryJump(); }
   if (k === 'm') muted = !muted;
   if (k === 'r') pendingReload = true;
   if (k === 'b' && curr && curr.me.alive) { shopOpen = !shopOpen; bigMap = false; }
@@ -849,6 +869,8 @@ overlay.addEventListener('pointerdown', e => {
       pointers.set(e.pointerId, { role: 'menu' });
       return;
     }
+    if (dist(p, JUMP_BTN) <= JUMP_BTN.hit) { tryJump(); pointers.set(e.pointerId, { role: 'menu' }); return; }
+    if (dist(p, CROUCH_BTN) <= CROUCH_BTN.hit) { crouchToggle = !crouchToggle; pointers.set(e.pointerId, { role: 'menu' }); return; }
     if (dist(p, SHOP_BTN) <= SHOP_BTN.hit && curr && curr.me.alive) {
       shopOpen = true;
       pointers.set(e.pointerId, { role: 'menu' });
@@ -873,12 +895,17 @@ overlay.addEventListener('pointerdown', e => {
 });
 
 overlay.addEventListener('pointermove', e => {
-  if (e.pointerType === 'mouse' && locked()) { yaw += e.movementX * 0.0025; return; }
+  if (e.pointerType === 'mouse' && locked()) {
+    yaw += e.movementX * 0.0025;
+    pitch = clamp(pitch - e.movementY * 0.0022, -MAX_PITCH, MAX_PITCH);
+    return;
+  }
   const rec = pointers.get(e.pointerId);
   if (!rec) return;
   const p = overlayPos(e);
   if (rec.role === 'look') {
     yaw += (p.x - rec.x) * 0.006;
+    pitch = clamp(pitch - (p.y - rec.y) * 0.005, -MAX_PITCH, MAX_PITCH);
     rec.x = p.x;
     rec.y = p.y;
   } else if (rec.role === 'stick') {
@@ -1129,7 +1156,7 @@ setInterval(() => {
   const len = Math.hypot(dx, dy);
   if (len > 1) { dx /= len; dy /= len; }
 
-  const shoot = (shootHeld || fireHeld || keys.has(' ')) && !shopOpen && !bigMap;
+  const shoot = (shootHeld || fireHeld || keys.has('f')) && !shopOpen && !bigMap;
   if (shoot && curr && curr.me.alive && !curr.me.downed && curr.ammo.mag > 0 && !curr.ammo.reloading && performance.now() - lastShotAt > 60) {
     lastShotAt = performance.now();
     onLocalShot();
@@ -1149,15 +1176,20 @@ setInterval(() => {
   const buy = pendingBuy;
   pendingBuy = 0;
   const ts = performance.now();
+  const crouch = isCrouching();
+  const jump = pendingJump;
+  pendingJump = false;
   if (canMove()) {
     moveFor(pred, lastMove.dx, lastMove.dy, (ts - lastMove.at) / 1000); // the input that just ended
-    pendingMoves.push({ ts, dx, dy });
+    // Predicted movement uses the speed the server will: slower while crouching.
+    const k = crouch ? CROUCH_SPEED : 1;
+    pendingMoves.push({ ts, dx: dx * k, dy: dy * k });
     if (pendingMoves.length > 120) pendingMoves.shift();
-    lastMove = { dx, dy, at: ts };
+    lastMove = { dx: dx * k, dy: dy * k, at: ts };
   } else {
     lastMove = { dx: 0, dy: 0, at: ts };
   }
-  sendToServer(JSON.stringify({ t: 'input', dx, dy, aim: yaw, shoot, ping, px, py, reload, switch: sw, revive, buy, ts }));
+  sendToServer(JSON.stringify({ t: 'input', dx, dy, aim: yaw, shoot, ping, px, py, reload, switch: sw, revive, buy, ts, pitch, crouch, jump }));
 }, TICK_MS);
 
 // Local shots: play the weapon's sound, kick the viewmodel, flash the muzzle, and draw a tracer.
@@ -1172,7 +1204,9 @@ function onLocalShot() {
   const vm = viewmodelFor(w);
   const muzzle = vm.userData.muzzle.clone().applyMatrix4(vm.matrixWorld);
   const range = curr.ammo.range;
-  const end = new THREE.Vector3(curr.me.x + Math.cos(yaw) * range, EYE - 2, curr.me.y + Math.sin(yaw) * range);
+  const flat = Math.cos(pitch) * range;
+  const end = new THREE.Vector3(curr.me.x + Math.cos(yaw) * flat, Math.max(0, camera.position.y + Math.sin(pitch) * range),
+    curr.me.y + Math.sin(yaw) * flat);
   const geo = new THREE.BufferGeometry().setFromPoints([muzzle, end]);
   const line = new THREE.Line(geo, new THREE.LineBasicMaterial({ color: 0xfff0b0, transparent: true, opacity: 0.8 }));
   scene.add(line);
@@ -1188,7 +1222,7 @@ function syncPlayers(t, dt, now) {
     let mesh = playerMeshes.get(p.id);
     if (!mesh) { mesh = makePlayerMesh(p); playerMeshes.set(p.id, mesh); }
     const old = prevById.get(p.id) ?? p;
-    mesh.position.set(lerp(old.x, p.x, t), 0, lerp(old.y, p.y, t));
+    mesh.position.set(lerp(old.x, p.x, t), lerp(old.z ?? 0, p.z ?? 0, t), lerp(old.y, p.y, t));
     const speed = Math.hypot(p.x - old.x, p.y - old.y) * (REPLAY ? 1000 / R.frameMs : 30);
     // A spectator has no side, so in a replay everyone keeps their own colours.
     const mate = !REPLAY && curr.me.team !== 0 && p.team === curr.me.team;
@@ -1316,10 +1350,17 @@ function updateCamera(meX, meY, dt) {
   walkAmount = lerp(walkAmount, clamp(speed / 180, 0, 1), Math.min(1, dt * 10));
   walkPhase += dt * 11 * walkAmount;
   // A downed player's view drops to the ground.
-  eyeHeight = lerp(eyeHeight, curr.me.downed ? 8 : EYE, Math.min(1, dt * 6));
-  const y = eyeHeight + Math.abs(Math.sin(walkPhase)) * 0.7 * walkAmount;
+  eyeHeight = lerp(eyeHeight, curr.me.downed ? 8 : isCrouching() ? CROUCH_EYE : EYE, Math.min(1, dt * 12));
+  // Your own jump is shown at once, with the same arc the server uses.
+  if (jumpZ > 0 || jumpV > 0) {
+    jumpZ += jumpV * dt;
+    jumpV -= GRAVITY * dt;
+    if (jumpZ <= 0 || !canMove()) { jumpZ = 0; jumpV = 0; }
+  }
+  const y = eyeHeight + jumpZ + Math.abs(Math.sin(walkPhase)) * 0.7 * walkAmount;
   camera.position.set(meX, y, meY);
-  camera.lookAt(meX + Math.cos(yaw) * 100, y, meY + Math.sin(yaw) * 100);
+  const flat = Math.cos(pitch) * 100;
+  camera.lookAt(meX + Math.cos(yaw) * flat, y + Math.sin(pitch) * 100, meY + Math.sin(yaw) * flat);
   skyDome.position.copy(camera.position);
   for (const c of clouds.children) {
     c.position.x += dt * 6;
@@ -1844,6 +1885,8 @@ function drawTouchControls() {
   drawButton(SWAP, 'SWAP', C.main, 0.5);
   drawButton(REVIVE_BTN, 'REVIVE', C.good, reviveTouched ? 0.9 : 0.5);
   drawButton(SHOP_BTN, 'SHOP', C.gold, shopOpen ? 0.9 : 0.5);
+  drawButton(JUMP_BTN, 'JUMP', C.main, 0.5);
+  drawButton(CROUCH_BTN, 'CROUCH', C.main, crouchToggle ? 0.9 : 0.5);
 }
 
 function drawFeed() {
@@ -2179,7 +2222,7 @@ if (new URLSearchParams(location.search).has('debug')) {
     state: () => curr && { me: curr.me, players: curr.players, started: curr.started },
     draw: on => { renderOn = on; },
     shown: () => ({ x: shown.x, y: shown.y, predicting, pending: pendingMoves.length, ping: pingMs }),
-    look: a => { yaw = a; },
+    look: (a, p = 0) => { yaw = a; pitch = p; },
     hold: (k, on) => { if (on) keys.add(k); else keys.delete(k); },
     // Low quality keeps software-rendered test browsers responsive while staging a shot.
     quality: q => { fxOn = q > 0; renderer.setPixelRatio(q > 0 ? DPR : 0.2); renderer.setSize(innerWidth, innerHeight); },

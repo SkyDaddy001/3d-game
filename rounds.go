@@ -50,14 +50,56 @@ func (m *Match) startRounds() {
 		ids = append(ids, id)
 	}
 	sort.Ints(ids)
-	for i, id := range ids {
+	// Players who picked a side get it while that side has room; everyone else, bots included,
+	// fills whichever team is smaller.
+	limit := (len(ids) + 1) / 2
+	size := map[int]int{}
+	for _, id := range ids {
 		p := m.players[id]
-		p.Team = i%2 + 1
+		p.Team = 0
+		if (p.wantSide == 1 || p.wantSide == 2) && size[p.wantSide] < limit {
+			p.Team = p.wantSide
+			size[p.Team]++
+		}
+	}
+	for _, id := range ids {
+		p := m.players[id]
+		if p.Team == 0 {
+			p.Team = 1
+			if size[2] < size[1] {
+				p.Team = 2
+			}
+			size[p.Team]++
+		}
 		p.ensureAmmo()
 		p.credits = roundStartCredits
 	}
 	m.round = &roundState{wins: map[int]int{}}
 	m.startRound()
+}
+
+// LobbyView tells a waiting player about the room before the match starts.
+type LobbyView struct {
+	Mode  string `json:"mode"`
+	Side  int    `json:"side"`  // the side this player picked: 1 Alpha, 2 Bravo, 0 none
+	Alpha int    `json:"alpha"` // how many players picked each side
+	Bravo int    `json:"bravo"`
+}
+
+// SetSide records the side a player wants in a rounds room. It has no effect once play starts.
+func (m *Match) SetSide(name string, side int) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.started || m.Mode != "rounds" || side < 0 || side > 2 {
+		return false
+	}
+	for _, p := range m.players {
+		if p.Name == name && !p.gone && p.bot == nil {
+			p.wantSide = side
+			return true
+		}
+	}
+	return false
 }
 
 // startRound brings everyone back, resets the arena, and opens the buy phase.

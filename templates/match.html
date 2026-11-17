@@ -37,6 +37,8 @@
     <button id="rp-restart" title="Start again">↺</button>
     {{end}}
     <button id="start" hx-post="/matches/{{.ID}}/start" hx-swap="none"{{if .Replay}} hidden{{end}}>Start</button>
+    <button id="side-alpha" hx-post="/matches/{{.ID}}/side" hx-vals='{"side":"alpha"}' hx-swap="none" hidden>Join Alpha</button>
+    <button id="side-bravo" hx-post="/matches/{{.ID}}/side" hx-vals='{"side":"bravo"}' hx-swap="none" hidden>Join Bravo</button>
     <button id="again" hx-post="/matches/quick" hx-swap="none" hidden>Play again</button>
     <button id="help" title="Controls">?</button>
     <a id="back" href="/" hidden>Lobby</a>

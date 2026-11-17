@@ -1,6 +1,10 @@
 package main
 
-import "testing"
+import (
+	"net/http"
+	"net/url"
+	"testing"
+)
 
 // newRoundsMatch makes a started rounds match with n bots and no obstacles.
 func newRoundsMatch(n int) *Match {
@@ -155,5 +159,55 @@ func TestBotRoundsMatchFinishes(t *testing.T) {
 	}
 	if !m.over {
 		t.Fatalf("rounds match still running after 25 simulated minutes: round %d, score %v", m.round.num, m.round.wins)
+	}
+}
+
+// Picked sides are honoured while there is room; everyone else balances the teams.
+func TestRoundsHonourPickedSides(t *testing.T) {
+	m := newArena()
+	m.Mode = "rounds"
+	for i := 1; i <= 6; i++ {
+		m.players[i] = &Player{ID: i, Name: string(rune('a' + i)), Alive: true, HP: 100}
+	}
+	m.players[5].wantSide = 2
+	m.players[6].wantSide = 2
+	m.players[1].wantSide = 2
+	m.players[2].wantSide = 2 // a fourth pick for Bravo: the side is full at three
+	m.startRounds()
+	sizes := map[int]int{}
+	for _, p := range m.players {
+		sizes[p.Team]++
+	}
+	if sizes[1] != 3 || sizes[2] != 3 {
+		t.Fatalf("team sizes %v, want 3 and 3", sizes)
+	}
+	// Picks are honoured in player ID order while Bravo has room: 1, 2 and 5 take the three seats.
+	if m.players[1].Team != 2 || m.players[2].Team != 2 || m.players[5].Team != 2 {
+		t.Fatal("players who picked Bravo while it had room should be on Bravo")
+	}
+	if m.players[6].Team != 1 {
+		t.Fatal("a pick for a full side should be moved to the other team")
+	}
+}
+
+// Rounds quick play uses its own rooms, and sides can be picked before the start.
+func TestRoundsQuickPlayAndSidePick(t *testing.T) {
+	srv, s := newTestServer(t)
+	a := newPlayer(t, srv.URL, "rounder_a")
+	b := newPlayer(t, srv.URL, "rounder_b")
+	br := roomID(postForm(t, a, srv.URL+"/matches/quick", nil))
+	rr := roomID(postForm(t, a, srv.URL+"/matches/quick", url.Values{"mode": {"rounds"}}))
+	if br == rr || s.get(rr).Info().Mode != "rounds" || s.get(br).Info().Mode == "rounds" {
+		t.Fatalf("battle royale room %s, rounds room %s (mode %q)", br, rr, s.get(rr).Info().Mode)
+	}
+	if got := roomID(postForm(t, b, srv.URL+"/matches/quick", url.Values{"mode": {"rounds"}})); got != rr {
+		t.Fatalf("second rounds player went to %s, want %s", got, rr)
+	}
+	s.get(rr).Join("rounder_a")
+	if r := postForm(t, a, srv.URL+"/matches/"+rr+"/side", url.Values{"side": {"bravo"}}); r.StatusCode != http.StatusNoContent {
+		t.Fatalf("pick side: status %d", r.StatusCode)
+	}
+	if r := postForm(t, a, srv.URL+"/matches/"+br+"/side", url.Values{"side": {"bravo"}}); r.StatusCode != http.StatusConflict {
+		t.Fatalf("picking a side in a battle royale room: status %d", r.StatusCode)
 	}
 }

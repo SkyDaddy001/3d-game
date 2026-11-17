@@ -135,6 +135,7 @@ type Player struct {
 	grenades   int
 	wantThrow  bool
 	throwCool  float64
+	wantSide   int     // rounds: the side picked before the start (1 Alpha, 2 Bravo)
 	swim       bool    // in a lake: slow, low in the water, and unable to shoot
 	quiet      float64 // seconds since the player last fired
 	sentWorld  bool    // the fixed terrain has been delivered to this player
@@ -263,6 +264,7 @@ type Snapshot struct {
 	Round     *RoundView   `json:"round,omitempty"`    // set in rounds mode
 	Grenades  []*Grenade   `json:"grenades,omitempty"` // grenades in the air near the player
 	World     *WorldView   `json:"world,omitempty"`    // lakes and bushes; sent once
+	Lobby     *LobbyView   `json:"lobby,omitempty"`    // set while waiting for the match to start
 	Shots     []ShotView   `json:"shots,omitempty"`    // other players' shots within earshot since the last snapshot
 }
 
@@ -1267,6 +1269,21 @@ func (m *Match) broadcast() {
 			if sh.by != me && math.Hypot(sh.X-me.X, sh.Y-me.Y) <= hearRange {
 				snap.Shots = append(snap.Shots, sh)
 			}
+		}
+		if !m.started {
+			lv := &LobbyView{Mode: m.Mode, Side: me.wantSide}
+			for _, q := range m.players {
+				if q.gone {
+					continue
+				}
+				switch q.wantSide {
+				case 1:
+					lv.Alpha++
+				case 2:
+					lv.Bravo++
+				}
+			}
+			snap.Lobby = lv
 		}
 		snap.Me.Hidden = me.Alive && me.quiet >= bushQuiet && !me.swim && m.inBush(me.X, me.Y)
 		if m.round != nil {

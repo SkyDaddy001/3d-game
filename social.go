@@ -25,11 +25,13 @@ func (s *Server) quickMatch(w http.ResponseWriter, r *http.Request) {
 	if !requirePlayer(w, r) {
 		return
 	}
+	// "mode=rounds" asks for a team-versus-team rounds room; anything else is battle royale.
+	rounds := r.FormValue("mode") == "rounds"
 	s.mu.Lock()
 	var pick *Match
 	for _, m := range s.matches {
 		info := m.Info()
-		if info.Started || info.Private || info.Players >= info.Max || m.Closed() {
+		if info.Started || info.Private || info.Players >= info.Max || m.Closed() || (info.Mode == "rounds") != rounds {
 			continue
 		}
 		if pick == nil || m.ID < pick.ID {
@@ -41,7 +43,13 @@ func (s *Server) quickMatch(w http.ResponseWriter, r *http.Request) {
 		id = pick.ID
 	} else {
 		id = fmt.Sprintf("%06d", rand.Intn(1_000_000))
-		s.matches[id] = s.newMatch(id)
+		m := s.newMatch(id)
+		if rounds {
+			m.mu.Lock()
+			m.Mode, m.Max = "rounds", 8
+			m.mu.Unlock()
+		}
+		s.matches[id] = m
 	}
 	s.mu.Unlock()
 	redirectTo(w, id)
@@ -140,4 +148,16 @@ func (s *Server) practiceMatch(w http.ResponseWriter, r *http.Request) {
 	s.matches[id] = m
 	s.mu.Unlock()
 	redirectTo(w, id)
+}
+
+// pickSide records which team a player wants in a rounds room that has not started.
+func (s *Server) pickSide(w http.ResponseWriter, r *http.Request) {
+	m := s.get(r.PathValue("id"))
+	side := map[string]int{"alpha": 1, "bravo": 2, "none": 0}
+	n, ok := side[r.FormValue("side")]
+	if m == nil || !ok || !m.SetSide(sessionFrom(r).acc.Name, n) {
+		http.Error(w, "sides can only be picked in a rounds room before it starts", http.StatusConflict)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }

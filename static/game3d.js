@@ -792,6 +792,8 @@ const hud = document.getElementById('status');
 const startBtn = document.getElementById('start');
 const backLink = document.getElementById('back');
 const againBtn = document.getElementById('again');
+const sideAlpha = document.getElementById('side-alpha');
+const sideBravo = document.getElementById('side-bravo');
 const STICK = { x: 110, y: 0, r: 70, hit: 90 };
 const FIRE = { x: 0, y: 0, r: 55, hit: 65 };
 const RELOAD = { x: 0, y: 0, r: 34, hit: 42 };
@@ -1164,7 +1166,14 @@ function onState(msg) {
   const out = msg.over || (msg.started && !msg.me.alive && !msg.round);
   backLink.hidden = !out;
   againBtn.hidden = !out;
-  if (!msg.started) hud.textContent = `${msg.alive} in the room · press Start, bots fill the empty spots`;
+  // Rounds rooms let you pick a side while waiting; "Play again" returns to the same kind of match.
+  const picking = !msg.started && msg.lobby && msg.lobby.mode === 'rounds';
+  sideAlpha.hidden = sideBravo.hidden = !picking;
+  if (msg.round || picking) againBtn.setAttribute('hx-vals', '{"mode":"rounds"}');
+  if (picking) {
+    const l = msg.lobby;
+    hud.textContent = `Rounds · ${msg.alive} here · you: ${['no side', 'Alpha', 'Bravo'][l.side]} · Alpha ${l.alpha} · Bravo ${l.bravo}`;
+  } else if (!msg.started) hud.textContent = `${msg.alive} in the room · press Start, bots fill the empty spots`;
   else if (msg.over) hud.textContent = msg.me.place === 1 ? 'Victory!' : `Winner: ${msg.winner}`;
   else if (msg.me.downed) hud.textContent = `DOWNED · bleeding out ${Math.ceil(msg.me.bleed)}s · teammate: hold E`;
   else if (msg.round) {

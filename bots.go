@@ -257,6 +257,9 @@ func botPurchase(p *Player) int {
 			return w + 1
 		}
 	}
+	if p.owned[2] && p.armor < armorMax/2 && p.credits >= armorPrice {
+		return armorSlot
+	}
 	for w := range weapons {
 		if p.owned[w] && p.mags[w] == 0 && p.reserves[w] == 0 && p.credits >= ammoPrice {
 			return w + 1

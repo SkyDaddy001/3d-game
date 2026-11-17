@@ -64,6 +64,7 @@ type inputMsg struct {
 	Pitch  float64 `json:"pitch"`
 	Crouch bool    `json:"crouch"`
 	Jump   bool    `json:"jump"`
+	Throw  bool    `json:"throw"`
 }
 
 func (s *Server) get(id string) *Match {
@@ -425,6 +426,7 @@ func (s *Server) serveWS(w http.ResponseWriter, r *http.Request) {
 			Pitch:  in.Pitch,
 			Crouch: in.Crouch,
 			Jump:   in.Jump,
+			Throw:  in.Throw,
 		})
 	}
 }

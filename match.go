@@ -131,6 +131,10 @@ type Player struct {
 	vz         float64
 	crouch     bool
 	wantJump   bool
+	armor      float64 // absorbs part of body damage until used up
+	grenades   int
+	wantThrow  bool
+	throwCool  float64
 	kills      int     // eliminations credited to this player
 	damage     float64 // total damage dealt to enemies
 	send       chan []byte
@@ -150,6 +154,7 @@ type Controls struct {
 	Pitch       float64
 	Crouch      bool
 	Jump        bool
+	Throw       bool
 }
 
 type Point struct {
@@ -196,6 +201,9 @@ type AmmoView struct {
 	Owned      []bool  `json:"owned"`  // one entry per weapon slot
 	Prices     []int   `json:"prices"` // weapon prices, by slot
 	AmmoPrice  int     `json:"ammoPrice"`
+	Armor      float64 `json:"armor"`
+	Grenades   int     `json:"grenades"`
+	GearPrices []int   `json:"gearPrices"` // armour, then grenade
 }
 
 type PlayerView struct {
@@ -247,7 +255,8 @@ type Snapshot struct {
 	XP        int          `json:"xp"`       // experience earned this match; set once the match is over
 	Trophies  int          `json:"trophies"` // trophy change this match; set once a ranked match is over
 	Ranked    bool         `json:"ranked"`
-	Round     *RoundView   `json:"round,omitempty"` // set in rounds mode
+	Round     *RoundView   `json:"round,omitempty"`    // set in rounds mode
+	Grenades  []*Grenade   `json:"grenades,omitempty"` // grenades in the air near the player
 }
 
 type Match struct {
@@ -282,7 +291,8 @@ type Match struct {
 	elapsed    float64     // seconds of play since the match started
 	round      *roundState // set in rounds mode
 	rec        *recorder   // set while the match is being recorded for a replay
-	resultSize int         // what placements were measured against when the match finished
+	grenades   []*Grenade
+	resultSize int // what placements were measured against when the match finished
 }
 
 // PlayerResult is one player's outcome, reported when the match ends.
@@ -516,6 +526,9 @@ func (m *Match) Input(p *Player, c Controls) {
 	if c.Jump {
 		p.wantJump = true
 	}
+	if c.Throw {
+		p.wantThrow = true
+	}
 }
 
 func (m *Match) Start() bool {
@@ -683,6 +696,7 @@ func (m *Match) step(dt float64) {
 		// Buy phase and the pause between rounds: shopping works, moving and shooting do not.
 		for _, p := range m.players {
 			p.DX, p.DY, p.wantShoot, p.wantRevive, p.wantJump = 0, 0, false, false, false
+			p.wantThrow = false
 		}
 	}
 
@@ -722,6 +736,11 @@ func (m *Match) step(dt float64) {
 		p.cooldown -= dt
 		p.pingCool -= dt
 		m.updateWeapon(p, dt)
+		p.throwCool = math.Max(0, p.throwCool-dt)
+		if p.wantThrow {
+			m.throwGrenade(p)
+			p.wantThrow = false
+		}
 
 		if p.wantPing && p.pingCool <= 0 {
 			m.pings = append(m.pings, Ping{X: p.pingAt.X, Y: p.pingAt.Y, Name: p.Name, Left: pingTime, team: p.Team})
@@ -745,6 +764,7 @@ func (m *Match) step(dt float64) {
 	}
 
 	m.updateRevives(dt)
+	m.stepGrenades(dt)
 
 	// Spread recovers, bounties and pings count down for everyone.
 	for _, p := range m.players {
@@ -897,6 +917,9 @@ func (p *Player) ensureAmmo() {
 // were spent.
 func (p *Player) buy(slot int) bool {
 	p.ensureAmmo()
+	if slot == armorSlot || slot == grenadeSlot {
+		return p.buyGear(slot)
+	}
 	i := slot - 1
 	if i < 0 || i >= len(weapons) {
 		return false
@@ -942,6 +965,7 @@ func (p *Player) ammoView() AmmoView {
 		Weapon: w.Name, Slot: p.weapon + 1, Mag: p.mags[p.weapon], Reserve: p.reserves[p.weapon],
 		Reloading: p.reloadLeft > 0, ReloadFrac: frac, Auto: w.Auto, Range: w.Range,
 		Credits: p.credits, Owned: p.owned[:], Prices: weaponPrices, AmmoPrice: ammoPrice,
+		Armor: math.Round(p.armor), Grenades: p.grenades, GearPrices: gearPrices,
 	}
 }
 
@@ -1067,12 +1091,7 @@ func (m *Match) shootRay(p *Player, angle, pitch, reach, dmg, headDmg float64) (
 	if targetHead {
 		d = headDmg
 	}
-	p.damage += math.Min(d, math.Max(target.HP, 0))
-	target.HP -= d
-	target.hurtCool = regenDelay
-	if target.HP <= 0 {
-		m.knockDown(target, p, targetHead)
-	}
+	m.hurt(target, p, d, targetHead)
 	return true, targetHead
 }
 
@@ -1227,6 +1246,11 @@ func (m *Match) broadcast() {
 		}
 		if m.round != nil {
 			snap.Round = m.roundView(me)
+		}
+		for _, g := range m.grenades {
+			if near(me, g.X, g.Y) {
+				snap.Grenades = append(snap.Grenades, g)
+			}
 		}
 		if m.over {
 			snap.XP = ComputeXP(me.kills, me.Place, int(me.damage))

@@ -68,6 +68,7 @@ func (m *Match) startRound() {
 	center := worldSize / 2.0
 	m.zoneX, m.zoneY, m.zoneR, m.zoneLeft = center, center, roundZoneR, roundShrinkEvery
 	m.pings = nil
+	m.grenades = nil
 
 	for _, p := range m.players {
 		if p.gone {
@@ -77,6 +78,7 @@ func (m *Match) startRound() {
 		if !p.Alive { // died last round: bought weapons are lost, the pistol stays
 			p.owned = [5]bool{true}
 			p.weapon = 0
+			p.armor, p.grenades = 0, 0
 		}
 		for i, w := range weapons {
 			if p.owned[i] {

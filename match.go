@@ -263,6 +263,7 @@ type Snapshot struct {
 	Round     *RoundView   `json:"round,omitempty"`    // set in rounds mode
 	Grenades  []*Grenade   `json:"grenades,omitempty"` // grenades in the air near the player
 	World     *WorldView   `json:"world,omitempty"`    // lakes and bushes; sent once
+	Shots     []ShotView   `json:"shots,omitempty"`    // other players' shots within earshot since the last snapshot
 }
 
 type Match struct {
@@ -295,8 +296,10 @@ type Match struct {
 	Host       string      // usertag of the creator
 	Ranked     bool        // results change trophies; set for public rooms
 	elapsed    float64     // seconds of play since the match started
+	Practice   bool        // a practice room: bots move about but never shoot
 	round      *roundState // set in rounds mode
 	rec        *recorder   // set while the match is being recorded for a replay
+	shots      []ShotView  // shots fired since the last broadcast
 	grenades   []*Grenade
 	lakes      []Circle
 	bushes     []Circle
@@ -1259,6 +1262,11 @@ func (m *Match) broadcast() {
 			Pings: []Ping{}, HitSeq: me.hitSeq, HitKind: me.hitKind, Ammo: me.ammoView(),
 			Ranked: m.Ranked,
 		}
+		for _, sh := range m.shots {
+			if sh.by != me && math.Hypot(sh.X-me.X, sh.Y-me.Y) <= hearRange {
+				snap.Shots = append(snap.Shots, sh)
+			}
+		}
 		snap.Me.Hidden = me.Alive && me.quiet >= bushQuiet && !me.swim && m.inBush(me.X, me.Y)
 		if m.round != nil {
 			snap.Round = m.roundView(me)
@@ -1322,6 +1330,7 @@ func (m *Match) broadcast() {
 		default: // slow client: drop this snapshot, the next one supersedes it
 		}
 	}
+	m.shots = m.shots[:0]
 }
 
 func clamp(v, lo, hi float64) float64 {

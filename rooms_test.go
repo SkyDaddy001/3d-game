@@ -95,3 +95,28 @@ func TestRoomTeamModes(t *testing.T) {
 		t.Fatalf("duo with 6 players: %d teams, want 3", len(got))
 	}
 }
+
+// Practice opens a private, unranked room that one player can start against a harmless bot.
+func TestPracticeRoom(t *testing.T) {
+	srv, s := newTestServer(t)
+	s.botFill = 8
+	pl := newPlayer(t, srv.URL, "learner_1")
+	id := roomID(postForm(t, pl, srv.URL+"/matches/practice", nil))
+	m := s.get(id)
+	if m == nil {
+		t.Fatal("no practice room was made")
+	}
+	info := m.Info()
+	if !info.Private || m.IsRanked() || !info.Bots {
+		t.Fatalf("practice room: %+v ranked %v", info, m.IsRanked())
+	}
+	m.Join("learner_1")
+	if !m.Start() {
+		t.Fatal("a practice room should start with one player")
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if len(m.players) != 2 || !m.Practice {
+		t.Fatalf("practice room has %d players, practice %v", len(m.players), m.Practice)
+	}
+}

@@ -127,7 +127,7 @@ func (m *Match) thinkBots(dt float64) {
 			p.Aim = aim + rand.NormFloat64()*botAimError
 			p.Pitch = pitchTo(p, target) + rand.NormFloat64()*botAimError*0.4
 			b.seen += dt
-			if b.seen >= botReact && m.elapsed >= botGrace {
+			if b.seen >= botReact && m.elapsed >= botGrace && !m.Practice {
 				// Tap the trigger: pressed for part of each cycle, so every weapon type fires.
 				b.trigger += dt
 				if math.Mod(b.trigger, 0.3) < 0.15 || weapons[p.weapon].Auto {

@@ -72,17 +72,33 @@ func round1(v float64) float64 { return math.Round(v*10) / 10 }
 
 // recordShot notes a trigger pull for the next frame. It is a no-op when nothing is recording.
 func (m *Match) recordShot(p *Player, reach float64) {
-	if m.rec == nil {
-		return
-	}
 	dx, dy := math.Cos(p.Aim), math.Sin(p.Aim)
 	for _, r := range m.obstacles {
 		if t, ok := rayRect(p.X, p.Y, dx, dy, r); ok && t < reach {
 			reach = t
 		}
 	}
-	m.rec.shots = append(m.rec.shots, ReplayShot{ID: p.ID, Angle: math.Round(p.Aim*1000) / 1000, Reach: round1(reach)})
+	angle := math.Round(p.Aim*1000) / 1000
+	// For live players: nearby clients hear the shot and see its tracer.
+	if len(m.shots) < 256 {
+		m.shots = append(m.shots, ShotView{by: p, X: round1(p.X), Y: round1(p.Y), Angle: angle, Reach: round1(reach), Weapon: weapons[p.weapon].Name})
+	}
+	if m.rec != nil {
+		m.rec.shots = append(m.rec.shots, ReplayShot{ID: p.ID, Angle: angle, Reach: round1(reach)})
+	}
 }
+
+// ShotView is one shot fired since the last snapshot, for sound and tracers.
+type ShotView struct {
+	by     *Player
+	X      float64 `json:"x"`
+	Y      float64 `json:"y"`
+	Angle  float64 `json:"a"`
+	Reach  float64 `json:"r"`
+	Weapon string  `json:"w"`
+}
+
+const hearRange = 900.0 // how far away a shot can be heard
 
 // capture adds a frame when one is due. force records one regardless, for the final moment.
 func (m *Match) capture(dt float64, force bool) {

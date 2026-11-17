@@ -38,6 +38,7 @@
     {{end}}
     <button id="start" hx-post="/matches/{{.ID}}/start" hx-swap="none"{{if .Replay}} hidden{{end}}>Start</button>
     <button id="again" hx-post="/matches/quick" hx-swap="none" hidden>Play again</button>
+    <button id="help" title="Controls">?</button>
     <a id="back" href="/" hidden>Lobby</a>
   </div>
   <script>window.MATCH = { id: {{.ID}}, name: {{.Name}}, replay: {{.Replay}} };</script>

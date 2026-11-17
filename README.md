@@ -280,3 +280,18 @@ milliseconds and feel a slow connection.
   not teammates or anyone behind cover tall enough to hide them. They also break crates.
 - **Scope:** with the sniper, hold the right mouse button, press Z, or tap SCOPE.
 - Bots buy armour once they own a rifle. They do not throw grenades.
+
+## Sound
+
+- Sounds in the world come from their direction (left or right of where you face) and fade
+  with distance.
+- You hear other players' gunfire up to 900 units away and see their tracers.
+- Footsteps: your own, and other players' within 420 units. Crouch-walking is silent, and
+  swimming splashes.
+- Grenade blasts carry further than gunfire. M mutes everything. There is no music.
+
+## Help and practice
+
+- A controls screen opens the first time you play, and with H or the ? button afterwards.
+- **Practice** in the lobby opens a private, unranked room with one bot that moves but never
+  shoots.

@@ -495,6 +495,7 @@ func newMux(s *Server) (http.Handler, error) {
 	mux.HandleFunc("GET /invites", s.invitesList)
 	mux.HandleFunc("POST /invites", s.sendInvite)
 	mux.HandleFunc("POST /matches/quick", s.quickMatch)
+	mux.HandleFunc("POST /matches/practice", s.practiceMatch)
 	mux.HandleFunc("GET /terms", s.terms)
 	mux.HandleFunc("GET /privacy", s.privacy)
 	mux.HandleFunc("POST /friends", s.addFriend)

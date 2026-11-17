@@ -654,6 +654,12 @@ function animateAvatar(root, p, speed, dt, now, mate) {
   root.rotation.y = u.facing;
 
   const run = clamp(speed / 180, 0, 1);
+  // Footsteps you can hear and place: one every 48 units walked. Crouching is silent.
+  u.stepDist = (u.stepDist ?? 0) + speed * dt;
+  if (u.stepDist > 48) {
+    u.stepDist = 0;
+    if (!p.crouch && !p.downed && !REPLAY) soundAt(root.position.x, root.position.z, p.swim ? SFX.splash : SFX.step, 420);
+  }
   u.phase += dt * (2 + run * 11);
   const swing = Math.sin(u.phase) * 0.9 * run;
   const breathe = Math.sin(now / 600 + u.phase * 0.01);
@@ -870,7 +876,8 @@ addEventListener('keydown', e => {
   if (k === 'z') scoped = !scoped;
   if (k === 'b' && curr && curr.me.alive) { shopOpen = !shopOpen; bigMap = false; }
   if (k === 'tab' || k === 'n') { e.preventDefault(); bigMap = !bigMap; shopOpen = false; }
-  if (k === 'escape') { shopOpen = false; bigMap = false; }
+  if (k === 'escape') { shopOpen = false; bigMap = false; helpOpen = false; }
+  if (k === 'h' || k === '?') { if (helpOpen) closeHelp(); else helpOpen = true; }
   if (shopOpen && k >= '1' && k <= '7') pendingBuy = Number(k);
   else if (k >= '1' && k <= '5') requestSwitch(Number(k));
   if (k === 'q' && curr && curr.me.alive) {
@@ -899,6 +906,7 @@ overlay.addEventListener('pointerdown', e => {
   if (e.pointerType === 'touch') touchActive = true;
 
   if (e.pointerType === 'touch') {
+    if (helpOpen) { closeHelp(); pointers.set(e.pointerId, { role: 'menu' }); return; }
     // Open menus take the tap first: a shop row buys, the big map pings, anywhere else closes.
     if (shopOpen) {
       const row = shopRows.find(r => inRect(p, r));
@@ -1008,6 +1016,25 @@ function ensureAudio() {
   if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
   if (audioCtx.state === 'suspended') audioCtx.resume();
 }
+// Every sound goes through a stereo panner, so sounds in the world come from their direction.
+// soundAt sets where the next sounds come from; plain calls play in the centre at full volume.
+let sfxPan = 0, sfxGain = 1;
+function sfxOut(node) {
+  const pan = audioCtx.createStereoPanner();
+  pan.pan.value = sfxPan;
+  node.connect(pan).connect(audioCtx.destination);
+}
+// soundAt plays fn as if it happened at world position (x, y): quieter with distance, and panned
+// left or right of where the camera faces. Nothing plays beyond maxDist.
+function soundAt(x, y, fn, maxDist = 900) {
+  if (!audioCtx || muted) return;
+  const dx = x - camera.position.x, dy = y - camera.position.z, d = Math.hypot(dx, dy);
+  if (d > maxDist) return;
+  sfxGain = Math.pow(1 - d / maxDist, 1.6);
+  sfxPan = d < 1 ? 0 : clamp((dx * -Math.sin(yaw) + dy * Math.cos(yaw)) / d, -1, 1) * 0.9;
+  try { fn(); } finally { sfxPan = 0; sfxGain = 1; }
+}
+
 function tone(freq, dur, type = 'square', vol = 0.08, slideTo = null, delay = 0) {
   if (!audioCtx || muted) return;
   const t0 = audioCtx.currentTime + delay;
@@ -1016,9 +1043,10 @@ function tone(freq, dur, type = 'square', vol = 0.08, slideTo = null, delay = 0)
   o.type = type;
   o.frequency.setValueAtTime(freq, t0);
   if (slideTo) o.frequency.exponentialRampToValueAtTime(slideTo, t0 + dur);
-  g.gain.setValueAtTime(vol, t0);
+  g.gain.setValueAtTime(vol * sfxGain, t0);
   g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
-  o.connect(g).connect(audioCtx.destination);
+  o.connect(g);
+  sfxOut(g);
   o.start(t0);
   o.stop(t0 + dur);
 }
@@ -1030,7 +1058,7 @@ function noiseBurst(dur, vol = 0.12, cutoff = 0) {
   for (let i = 0; i < n; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / n);
   const src = audioCtx.createBufferSource();
   const g = audioCtx.createGain();
-  g.gain.value = vol;
+  g.gain.value = vol * sfxGain;
   src.buffer = buf;
   let node = src;
   if (cutoff) {
@@ -1039,7 +1067,8 @@ function noiseBurst(dur, vol = 0.12, cutoff = 0) {
     f.frequency.value = cutoff;
     node = src.connect(f);
   }
-  node.connect(g).connect(audioCtx.destination);
+  node.connect(g);
+  sfxOut(g);
   src.start();
 }
 // Each weapon has its own voice: a sharp crack for the pistol, a chatter for the SMG, and so on.
@@ -1061,6 +1090,8 @@ const SFX = {
   reloadDone: () => tone(1100, 0.08, 'square', 0.06),
   switch: () => tone(700, 0.04, 'square', 0.04),
   cash: () => { tone(1200, 0.06, 'sine', 0.07); tone(1600, 0.1, 'sine', 0.07, null, 0.06); },
+  step: () => noiseBurst(0.07, 0.1, 500),
+  splash: () => noiseBurst(0.22, 0.09, 1600),
   boom: (vol = 1) => { noiseBurst(0.5, 0.5 * vol, 700); tone(70, 0.5, 'sawtooth', 0.2 * vol, 25); },
   crate: () => { noiseBurst(0.16, 0.25, 1400); tone(180, 0.12, 'square', 0.06, 70); },
   buy: () => { tone(500, 0.06, 'square', 0.06); tone(750, 0.06, 'square', 0.06, null, 0.07); tone(1000, 0.1, 'square', 0.06, null, 0.14); },
@@ -1078,6 +1109,17 @@ function onState(msg) {
   msg.loot ??= curr ? curr.loot : [];
   msg.grenades ??= [];
   if (msg.world) buildWorld(msg.world);
+  // Other players' shots: a tracer, and the weapon's sound from where it was fired.
+  for (const sh of msg.shots ?? []) {
+    if (window.__arena) window.__shotsHeard = (window.__shotsHeard || 0) + 1;
+    const from = new THREE.Vector3(sh.x + Math.cos(sh.a) * 14, 22, sh.y + Math.sin(sh.a) * 14);
+    const to = new THREE.Vector3(sh.x + Math.cos(sh.a) * sh.r, 22, sh.y + Math.sin(sh.a) * sh.r);
+    const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints([from, to]),
+      new THREE.LineBasicMaterial({ color: 0xfff0b0, transparent: true, opacity: 0.85 }));
+    scene.add(line);
+    tracers.push({ obj: line, until: performance.now() + 110 });
+    soundAt(sh.x, sh.y, SHOT_SOUND[sh.w] ?? SHOT_SOUND.Pistol);
+  }
   if (msg.echo) pingMs = pingMs ? lerp(pingMs, performance.now() - msg.echo, 0.1) : performance.now() - msg.echo;
 
   if (curr) {
@@ -1376,7 +1418,7 @@ function syncGrenades(now) {
     ball.position.copy(m.position);
     scene.add(ball);
     blasts.push({ ball, start: now });
-    SFX.boom(clamp(1 - m.position.distanceTo(camera.position) / 900, 0.15, 1));
+    soundAt(m.position.x, m.position.z, () => SFX.boom(1), 1400);
     scene.remove(m);
     grenadeMeshes.delete(gid);
   }
@@ -1444,7 +1486,12 @@ function updateCamera(meX, meY, dt) {
   const speed = predicting ? Math.hypot(lastMove.dx, lastMove.dy) * MOVE_SPEED
     : Math.hypot(curr.me.x - prev.me.x, curr.me.y - prev.me.y) * 30;
   walkAmount = lerp(walkAmount, clamp(speed / 180, 0, 1), Math.min(1, dt * 10));
+  const before = Math.floor(walkPhase / Math.PI);
   walkPhase += dt * 11 * walkAmount;
+  // Your own footsteps, one per step of the bob; splashes in water; silence while crouched.
+  if (Math.floor(walkPhase / Math.PI) !== before && walkAmount > 0.3 && jumpZ === 0) {
+    if (curr.me.swim) SFX.splash(); else if (!isCrouching()) SFX.step();
+  }
   // A downed player's view drops to the ground.
   eyeHeight = lerp(eyeHeight, curr.me.swim ? SWIM_EYE : curr.me.downed ? 8 : isCrouching() ? CROUCH_EYE : EYE, Math.min(1, dt * 12));
   // The sniper scope narrows the view.
@@ -2039,6 +2086,61 @@ function drawScope() {
   ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.stroke();
 }
 
+// ---------- Controls screen ----------
+// Shown the first time someone plays, and whenever they press H or the ? button.
+let helpOpen = false;
+try { if (!REPLAY && !localStorage.getItem('arena-seen-help')) helpOpen = true; } catch { /* storage unavailable */ }
+function closeHelp() {
+  helpOpen = false;
+  try { localStorage.setItem('arena-seen-help', '1'); } catch { /* storage unavailable */ }
+}
+document.getElementById('help')?.addEventListener('click', () => { if (helpOpen) closeHelp(); else helpOpen = true; });
+const HELP_KEYS = [
+  ['Move', 'W A S D'], ['Look', 'Mouse'], ['Fire', 'Left click or F'], ['Scope (sniper)', 'Right click or Z'],
+  ['Jump', 'Space'], ['Crouch', 'Hold C or Ctrl'], ['Reload', 'R'], ['Switch weapon', '1-5 or wheel'],
+  ['Shop', 'B, then 1-7'], ['Grenade', 'G'], ['Revive teammate', 'Hold E'], ['Ping', 'Q'],
+  ['Full map', 'Tab or N'], ['Mute', 'M'], ['This screen', 'H'],
+];
+const HELP_TOUCH = [
+  ['Move', 'Left stick'], ['Look', 'Drag anywhere'], ['Fire, reload, swap', 'Right buttons'],
+  ['Jump, crouch', 'Middle buttons'], ['Shop, grenade', 'Top right buttons'], ['Full map', 'Tap the radar'],
+  ['Ping', 'Tap the full map'], ['This screen', '? at the top'],
+];
+const HELP_TIPS = [
+  'Aim at the head: a centred shot there does the most damage.',
+  'Crouch behind small crates. Big crates and containers hide you standing.',
+  'A bush hides you from a distance until you fire. You cannot shoot while swimming.',
+  'Stay inside the red circle. Coins and eliminations pay for better weapons.',
+];
+function drawHelp() {
+  const rows = touchActive ? HELP_TOUCH : HELP_KEYS;
+  const w = Math.min(520, VW - 24), rowH = 22, h = 96 + rows.length * rowH + HELP_TIPS.length * 18;
+  const x = VW / 2 - w / 2, y = Math.max(60, VH / 2 - h / 2);
+  panel(x, y, w, h, 16, C.dim, 'rgba(5,14,26,0.94)');
+  ctx.textAlign = 'left';
+  ctx.fillStyle = C.main;
+  ctx.font = font(15, 800);
+  ctx.fillText('HOW TO PLAY', x + 18, y + 28);
+  rows.forEach(([what, how], i) => {
+    const ry = y + 54 + i * rowH;
+    ctx.textAlign = 'left';
+    ctx.fillStyle = C.text;
+    ctx.font = font(12);
+    ctx.fillText(what, x + 22, ry);
+    ctx.textAlign = 'right';
+    ctx.fillStyle = C.gold;
+    ctx.font = font(12, 800);
+    ctx.fillText(how, x + w - 22, ry);
+  });
+  ctx.textAlign = 'left';
+  ctx.fillStyle = C.dim;
+  ctx.font = font(11);
+  HELP_TIPS.forEach((tip, i) => ctx.fillText('> ' + tip, x + 22, y + 62 + rows.length * rowH + i * 18));
+  ctx.textAlign = 'center';
+  ctx.fillStyle = C.main;
+  ctx.fillText(touchActive ? 'TAP ANYWHERE TO CLOSE' : 'PRESS H OR ESC TO CLOSE', VW / 2, y + h - 12);
+}
+
 function drawFeed() {
   ctx.textAlign = 'right';
   ctx.font = font(11);
@@ -2073,6 +2175,7 @@ function drawOverlay(now) {
   if (touchActive) drawTouchControls();
   if (bigMap) drawBigMap(now);
   if (shopOpen && curr.me.alive) drawShop(); else shopOpen = false;
+  if (helpOpen) drawHelp();
 
   ctx.textAlign = 'center';
   if (curr.started && curr.me.downed && !curr.over) {

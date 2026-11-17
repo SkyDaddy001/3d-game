@@ -65,3 +65,31 @@ func TestDroppedSnapshotResendsWorld(t *testing.T) {
 		t.Fatal("the lists were lost with the dropped snapshot")
 	}
 }
+
+// Players hear and see other players' shots nearby, once, and not their own.
+func TestNearbyShotsAreSent(t *testing.T) {
+	m := newMatchState("shots1")
+	m.obstacles, m.lakes, m.bushes = nil, nil, nil
+	a, _ := m.Join("shooter_x")
+	b, _ := m.Join("listener_y")
+	c, _ := m.Join("far_away_z")
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	a.Team, b.Team, c.Team = 1, 2, 3
+	a.X, a.Y, b.X, b.Y, c.X, c.Y = 500, 500, 700, 500, 1900, 1900
+	m.fire(a)
+	m.broadcast()
+	if got := readSnap(t, b).Shots; len(got) != 1 || got[0].Weapon != "Pistol" || got[0].X != 500 {
+		t.Fatalf("listener got %+v", got)
+	}
+	if len(readSnap(t, a).Shots) != 0 {
+		t.Fatal("the shooter was sent their own shot")
+	}
+	if len(readSnap(t, c).Shots) != 0 {
+		t.Fatal("a player out of earshot was sent the shot")
+	}
+	m.broadcast()
+	if len(readSnap(t, b).Shots) != 0 {
+		t.Fatal("the shot was sent twice")
+	}
+}

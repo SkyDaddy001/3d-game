@@ -119,3 +119,25 @@ func containsFold(list []string, v string) bool {
 
 func (s *Server) terms(w http.ResponseWriter, r *http.Request)   { s.render(w, "terms.html", nil) }
 func (s *Server) privacy(w http.ResponseWriter, r *http.Request) { s.render(w, "privacy.html", nil) }
+
+// practiceMatch opens a private, unranked room with one bot that never shoots, for learning the
+// controls.
+func (s *Server) practiceMatch(w http.ResponseWriter, r *http.Request) {
+	if !requirePlayer(w, r) {
+		return
+	}
+	if s.limited(w, r, "room", 12, time.Minute) {
+		return
+	}
+	id := fmt.Sprintf("%06d", rand.Intn(1_000_000))
+	m := s.newMatch(id)
+	m.mu.Lock()
+	m.Max, m.FillTo, m.Mode = 1, 2, "solo"
+	m.Private, m.Ranked, m.Practice = true, false, true
+	m.Host = sessionFrom(r).acc.Name
+	m.mu.Unlock()
+	s.mu.Lock()
+	s.matches[id] = m
+	s.mu.Unlock()
+	redirectTo(w, id)
+}

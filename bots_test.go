@@ -288,3 +288,19 @@ func TestTeammatesStartTogether(t *testing.T) {
 		}
 	}
 }
+
+// In a practice room the bot never fires.
+func TestPracticeBotsNeverShoot(t *testing.T) {
+	m := newArena()
+	m.started, m.Practice = true, true
+	m.elapsed = botLootPhase + 1
+	bot := &Player{ID: 1, Name: "Bot A", Team: 1, X: 500, Y: 500, Alive: true, HP: 100, bot: &botState{strafeDir: 1}}
+	human := &Player{ID: 2, Name: "learner", Team: 2, X: 620, Y: 500, Alive: true, HP: 100}
+	m.players[1], m.players[2] = bot, human
+	for i := 0; i < 30*10; i++ {
+		m.step(1.0 / 30)
+	}
+	if human.HP != 100 {
+		t.Fatal("a practice bot hurt the player")
+	}
+}

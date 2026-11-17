@@ -13,7 +13,7 @@ const (
 	botSight      = 480.0 // how far a bot notices enemies
 	botAimError   = 0.09  // radians of aim wobble (standard deviation)
 	botReact      = 0.6   // seconds an enemy must stay visible before a bot opens fire
-	botReviveSeek = 320.0 // how far a bot will go to revive a teammate
+	botReviveSeek = 480.0 // how far a bot will go to revive a teammate
 	botGrace      = 5.0   // seconds after the start before bots open fire, so nobody dies on arrival
 	botLootPhase  = 35.0  // opening seconds spent gathering cash and buying rather than hunting
 	botEarlySight = 170.0 // during the loot phase a bot only fights what comes this close
@@ -38,6 +38,10 @@ type botState struct {
 	lastX      float64
 	lastY      float64
 	stuck      float64
+	path       []Point // waypoints of the current route, nearest first
+	pathGoal   Point
+	replan     float64
+	roam       Point // where the bot is wandering to
 }
 
 // addBotsLocked adds bots until the room holds size players. The caller must hold m.mu.
@@ -158,25 +162,26 @@ func (m *Match) thinkBots(dt float64) {
 			p.wantBuy = botPurchase(p)
 			gx, gy, has := m.botGoal(p)
 			if !has {
-				// Roam, changing heading every few seconds.
+				// Roam: walk to a random open spot inside the zone, then pick another.
 				b.wanderLeft -= dt
-				if b.wanderLeft <= 0 {
-					b.wanderA = rand.Float64() * 2 * math.Pi
-					b.wanderLeft = 2 + rand.Float64()*3
+				if b.wanderLeft <= 0 || math.Hypot(b.roam.X-p.X, b.roam.Y-p.Y) < 30 ||
+					math.Hypot(b.roam.X-m.zoneX, b.roam.Y-m.zoneY) > m.zoneR*0.8 {
+					b.roam.X, b.roam.Y = m.spawnPoint()
+					b.wanderLeft = 10 + rand.Float64()*8
 				}
-				gx, gy = p.X+math.Cos(b.wanderA)*100, p.Y+math.Sin(b.wanderA)*100
+				gx, gy = b.roam.X, b.roam.Y
 			}
-			a := math.Atan2(gy-p.Y, gx-p.X)
-			p.Aim, p.Pitch = a, 0
 			if math.Hypot(gx-p.X, gy-p.Y) > 8 {
-				mx, my = math.Cos(a), math.Sin(a)
+				mx, my = m.steer(p, gx, gy, dt)
+				if mx != 0 || my != 0 {
+					p.Aim, p.Pitch = math.Atan2(my, mx), 0
+				}
 			}
 		}
 
 		// Staying inside the zone comes first.
 		if toZone > m.zoneR*0.85 {
-			a := math.Atan2(m.zoneY-p.Y, m.zoneX-p.X)
-			mx, my = math.Cos(a), math.Sin(a)
+			mx, my = m.steer(p, m.zoneX, m.zoneY, dt)
 		}
 		if b.detourLeft > 0 {
 			mx, my = math.Cos(b.wanderA), math.Sin(b.wanderA)

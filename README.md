@@ -295,3 +295,9 @@ milliseconds and feel a slow connection.
 - A controls screen opens the first time you play, and with H or the ? button afterwards.
 - **Practice** in the lobby opens a private, unranked room with one bot that moves but never
   shoots.
+
+## Bot routes
+
+Bots find their way with a grid of walkable cells and A* search: around buildings, containers
+and crates, and around lakes rather than through them. The grid is rebuilt when a crate breaks.
+They walk straight wherever the line is clear and only search for a route when it is not.

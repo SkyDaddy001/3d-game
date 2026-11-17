@@ -299,6 +299,7 @@ type Match struct {
 	Practice   bool        // a practice room: bots move about but never shoot
 	round      *roundState // set in rounds mode
 	rec        *recorder   // set while the match is being recorded for a replay
+	nav        *navGrid    // walkable cells for bot routes; rebuilt when obstacles change
 	shots      []ShotView  // shots fired since the last broadcast
 	grenades   []*Grenade
 	lakes      []Circle

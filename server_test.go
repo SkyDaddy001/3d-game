@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"regexp"
 	"strings"
 	"sync"
@@ -47,7 +48,14 @@ var testMail = &captureMailer{}
 
 func newTestServer(t *testing.T) (*httptest.Server, *Server) {
 	t.Helper()
-	s, err := newServer(t.TempDir()+"/accounts.json", testMail)
+	// Not t.TempDir: a match that ends as the test finishes may still be saving a result, and
+	// TempDir fails the test if a file appears while it is being removed.
+	dir, err := os.MkdirTemp("", "arena-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	s, err := newServer(dir+"/accounts.json", testMail)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -114,7 +114,7 @@ func (m *Match) thinkBots(dt float64) {
 				continue
 			}
 			d := math.Hypot(q.X-p.X, q.Y-p.Y)
-			if d < best && m.canSee(p, q) {
+			if d < best && !m.concealed(p, q) && m.canSee(p, q) {
 				target, best = q, d
 			}
 		}

@@ -11,6 +11,7 @@ import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 const { id } = window.MATCH;
 const EYE = 30, CROUCH_EYE = 16;                 // must match height.go
 const JUMP_SPEED = 78, GRAVITY = 220, CROUCH_SPEED = 0.55, MAX_PITCH = 1.2;
+const SWIM_SPEED = 0.5, SWIM_EYE = 8, BLAST_RADIUS = 95; // terrain.go and gear.go
 const TICK_MS = 1000 / 30;
 const REPLAY = !!window.MATCH.replay;                              // spectating a recording
 const CAPTURE = new URLSearchParams(location.search).has('capture'); // frames are stepped from outside
@@ -380,33 +381,70 @@ function makeTree(r) {
   return g;
 }
 
-// Ground cover: flowers and bushes, placed once from fixed random numbers and drawn in batches.
-{
-  const flowerGeo = new THREE.SphereGeometry(1.6, 8, 6);
-  const bushGeo = new THREE.IcosahedronGeometry(1, 1);
-  const dummy = new THREE.Object3D();
-  const FLOWERS = [0xffffff, 0xffe04a, 0xff7fb0, 0xb48cff];
-  FLOWERS.forEach((color, f) => {
-    const mesh = new THREE.InstancedMesh(flowerGeo, new THREE.MeshStandardMaterial({ color, roughness: 0.6, emissive: color, emissiveIntensity: 0.12 }), 260);
-    for (let i = 0; i < 260; i++) {
-      dummy.position.set(hash01(i, 40 + f) * 2000, 1.6, hash01(i, 50 + f) * 2000);
-      dummy.scale.set(1, 0.7, 1);
-      dummy.updateMatrix();
-      mesh.setMatrixAt(i, dummy.matrix);
+// ---------- Terrain: lakes, bushes, grass, flowers ----------
+// Lakes and bushes come from the server once. Grass and flowers are decoration, placed from fixed
+// random numbers so every player sees the same field, and left out of the water.
+let world = { lakes: [], bushes: [] };
+const inWaterAt = (x, y) => world.lakes.some(l => Math.hypot(x - l.x, y - l.y) < l.r);
+const matWater = new THREE.MeshStandardMaterial({ color: 0x2f9be6, roughness: 0.12, metalness: 0.35, transparent: true, opacity: 0.86 });
+const matLakeBed = new THREE.MeshStandardMaterial({ color: 0x1d5f8f, roughness: 1 });
+const matSand = new THREE.MeshStandardMaterial({ color: 0xead9a2, roughness: 1 });
+const waterMeshes = [];
+function buildWorld(w) {
+  world = w;
+  const flat = m => { m.rotation.x = -Math.PI / 2; m.receiveShadow = true; scene.add(m); return m; };
+  for (const l of w.lakes) {
+    flat(new THREE.Mesh(new THREE.RingGeometry(l.r - 2, l.r + 9, 56), matSand)).position.set(l.x, 0.25, l.y);
+    flat(new THREE.Mesh(new THREE.CircleGeometry(l.r, 56), matLakeBed)).position.set(l.x, 0.35, l.y);
+    const water = flat(new THREE.Mesh(new THREE.CircleGeometry(l.r, 56), matWater));
+    water.position.set(l.x, 2.2, l.y);
+    waterMeshes.push(water);
+  }
+  // Bushes: big enough to stand in. A player inside one is hidden from a distance.
+  const blob = new THREE.IcosahedronGeometry(1, 1);
+  for (const b of w.bushes) {
+    const g = new THREE.Group();
+    const mat = LEAF_MATS[Math.floor(hash01(b.x, b.y) * LEAF_MATS.length)];
+    for (let k = 0; k < 5; k++) {
+      const a = (k / 5) * Math.PI * 2 + hash01(b.x, k), d = k === 0 ? 0 : b.r * 0.55;
+      const m = new THREE.Mesh(blob, mat);
+      const sz = b.r * (k === 0 ? 0.8 : 0.55 + hash01(b.y, k) * 0.2);
+      m.scale.set(sz, sz * 0.8, sz);
+      m.position.set(Math.cos(a) * d, sz * 0.6, Math.sin(a) * d);
+      m.castShadow = true;
+      m.receiveShadow = true;
+      g.add(m);
     }
+    g.position.set(b.x, 0, b.y);
+    scene.add(g);
+  }
+  const dummy = new THREE.Object3D();
+  const place = (mesh, i, x, y, sx, sy, height) => {
+    dummy.position.set(x, height, y);
+    dummy.rotation.y = hash01(x, y) * 6.28;
+    const k = inWaterAt(x, y) ? 0 : 1;
+    dummy.scale.set(sx * k, sy * k, sx * k);
+    dummy.updateMatrix();
+    mesh.setMatrixAt(i, dummy.matrix);
+  };
+  // Grass tufts: thin blades in three greens.
+  const tuftGeo = new THREE.ConeGeometry(1.3, 1, 4);
+  const perShade = LOW ? 600 : 2200;
+  [0x4fae3c, 0x76c94a, 0x9bd85e].forEach((color, c) => {
+    const mesh = new THREE.InstancedMesh(tuftGeo, new THREE.MeshStandardMaterial({ color, roughness: 1 }), perShade);
+    for (let i = 0; i < perShade; i++) {
+      const h = 4 + hash01(i, 71 + c) * 6;
+      place(mesh, i, hash01(i, 72 + c) * 2000, hash01(i, 75 + c) * 2000, 1, h, h / 2);
+    }
+    mesh.receiveShadow = true;
     scene.add(mesh);
   });
-  const bushes = new THREE.InstancedMesh(bushGeo, LEAF_MATS[2], 160);
-  for (let i = 0; i < 160; i++) {
-    const s = 5 + hash01(i, 61) * 6;
-    dummy.position.set(hash01(i, 62) * 2000, s * 0.45, hash01(i, 63) * 2000);
-    dummy.scale.set(s * 1.3, s * 0.8, s * 1.3);
-    dummy.updateMatrix();
-    bushes.setMatrixAt(i, dummy.matrix);
-  }
-  bushes.castShadow = true;
-  bushes.receiveShadow = true;
-  scene.add(bushes);
+  const flowerGeo = new THREE.SphereGeometry(1.6, 8, 6);
+  [0xffffff, 0xffe04a, 0xff7fb0, 0xb48cff].forEach((color, f) => {
+    const mesh = new THREE.InstancedMesh(flowerGeo, new THREE.MeshStandardMaterial({ color, roughness: 0.6, emissive: color, emissiveIntensity: 0.12 }), 260);
+    for (let i = 0; i < 260; i++) place(mesh, i, hash01(i, 40 + f) * 2000, hash01(i, 50 + f) * 2000, 1, 0.7, 1.6);
+    scene.add(mesh);
+  });
 }
 
 const playerMeshes = new Map();
@@ -634,6 +672,9 @@ function animateAvatar(root, p, speed, dt, now, mate) {
   // Crouching squashes the body to two thirds of its height.
   u.squat = lerp(u.squat ?? 0, p.crouch ? 1 : 0, Math.min(1, dt * 14));
   u.body.scale.y = 1 - 0.33 * u.squat;
+  // Swimmers sit low in the water: only the head and shoulders show.
+  u.sink = lerp(u.sink ?? 0, p.swim ? 1 : 0, Math.min(1, dt * 10));
+  u.body.position.y -= 22 * u.sink;
 
   // Blink: the eyes squash shut for a moment every few seconds.
   if (now > u.blinkAt + 130) u.blinkAt = now + 2200 + Math.random() * 2600;
@@ -753,6 +794,8 @@ const REVIVE_BTN = { x: 0, y: 0, r: 34, hit: 42 };
 const SHOP_BTN = { x: 0, y: 0, r: 30, hit: 38 };
 const JUMP_BTN = { x: 0, y: 0, r: 34, hit: 42 };
 const CROUCH_BTN = { x: 0, y: 0, r: 34, hit: 42 };
+const NADE_BTN = { x: 0, y: 0, r: 30, hit: 38 };
+const SCOPE_BTN = { x: 0, y: 0, r: 30, hit: 38 };
 
 let VW = innerWidth, VH = innerHeight;
 function resize() {
@@ -772,6 +815,8 @@ function resize() {
   SHOP_BTN.x = innerWidth - 110; SHOP_BTN.y = innerHeight - 310;
   JUMP_BTN.x = innerWidth - 340; JUMP_BTN.y = innerHeight - 165;
   CROUCH_BTN.x = innerWidth - 340; CROUCH_BTN.y = innerHeight - 75;
+  NADE_BTN.x = innerWidth - 230; NADE_BTN.y = innerHeight - 310;
+  SCOPE_BTN.x = innerWidth - 340; SCOPE_BTN.y = innerHeight - 255;
 }
 addEventListener('resize', resize);
 resize();
@@ -790,6 +835,8 @@ let pendingBuy = 0;
 let pitch = 0;            // up or down aim, in radians; positive is up
 let crouchToggle = false; // touch: the crouch button stays on until tapped again
 let pendingJump = false;
+let pendingThrow = false;
+let scoped = false;       // looking through the sniper scope
 let jumpZ = 0, jumpV = 0; // the local player's jump, shown at once and decided by the server
 const isCrouching = () => keys.has('c') || keys.has('control') || crouchToggle;
 function tryJump() {
@@ -819,10 +866,13 @@ addEventListener('keydown', e => {
   if (k === ' ') { e.preventDefault(); if (!REPLAY) tryJump(); }
   if (k === 'm') muted = !muted;
   if (k === 'r') pendingReload = true;
+  if (k === 'g') pendingThrow = true;
+  if (k === 'z') scoped = !scoped;
   if (k === 'b' && curr && curr.me.alive) { shopOpen = !shopOpen; bigMap = false; }
   if (k === 'tab' || k === 'n') { e.preventDefault(); bigMap = !bigMap; shopOpen = false; }
   if (k === 'escape') { shopOpen = false; bigMap = false; }
-  if (k >= '1' && k <= '5') { if (shopOpen) pendingBuy = Number(k); else requestSwitch(Number(k)); }
+  if (shopOpen && k >= '1' && k <= '7') pendingBuy = Number(k);
+  else if (k >= '1' && k <= '5') requestSwitch(Number(k));
   if (k === 'q' && curr && curr.me.alive) {
     pendingPing = { x: curr.me.x + Math.cos(yaw) * 300, y: curr.me.y + Math.sin(yaw) * 300 };
   }
@@ -870,6 +920,8 @@ overlay.addEventListener('pointerdown', e => {
       return;
     }
     if (dist(p, JUMP_BTN) <= JUMP_BTN.hit) { tryJump(); pointers.set(e.pointerId, { role: 'menu' }); return; }
+    if (dist(p, NADE_BTN) <= NADE_BTN.hit) { pendingThrow = true; pointers.set(e.pointerId, { role: 'menu' }); return; }
+    if (dist(p, SCOPE_BTN) <= SCOPE_BTN.hit && curr && curr.ammo.weapon === 'Sniper') { scoped = !scoped; pointers.set(e.pointerId, { role: 'menu' }); return; }
     if (dist(p, CROUCH_BTN) <= CROUCH_BTN.hit) { crouchToggle = !crouchToggle; pointers.set(e.pointerId, { role: 'menu' }); return; }
     if (dist(p, SHOP_BTN) <= SHOP_BTN.hit && curr && curr.me.alive) {
       shopOpen = true;
@@ -889,15 +941,21 @@ overlay.addEventListener('pointerdown', e => {
     return;
   }
   // Mouse: the first click captures the pointer for mouse-look; while captured, the button fires.
+  if (e.button === 2) return;
   if (!locked()) overlay.requestPointerLock();
   else shootHeld = true;
   pointers.set(e.pointerId, { role: 'mouse' });
 });
 
+// The right mouse button holds the sniper scope up.
+overlay.addEventListener('mousedown', e => { if (e.button === 2) scoped = true; });
+addEventListener('mouseup', e => { if (e.button === 2) scoped = false; });
+overlay.addEventListener('contextmenu', e => e.preventDefault());
+
 overlay.addEventListener('pointermove', e => {
   if (e.pointerType === 'mouse' && locked()) {
-    yaw += e.movementX * 0.0025;
-    pitch = clamp(pitch - e.movementY * 0.0022, -MAX_PITCH, MAX_PITCH);
+    yaw += e.movementX * 0.0025 * (camera.fov / 72); // slower while scoped
+    pitch = clamp(pitch - e.movementY * 0.0022 * (camera.fov / 72), -MAX_PITCH, MAX_PITCH);
     return;
   }
   const rec = pointers.get(e.pointerId);
@@ -1003,6 +1061,7 @@ const SFX = {
   reloadDone: () => tone(1100, 0.08, 'square', 0.06),
   switch: () => tone(700, 0.04, 'square', 0.04),
   cash: () => { tone(1200, 0.06, 'sine', 0.07); tone(1600, 0.1, 'sine', 0.07, null, 0.06); },
+  boom: (vol = 1) => { noiseBurst(0.5, 0.5 * vol, 700); tone(70, 0.5, 'sawtooth', 0.2 * vol, 25); },
   crate: () => { noiseBurst(0.16, 0.25, 1400); tone(180, 0.12, 'square', 0.06, 70); },
   buy: () => { tone(500, 0.06, 'square', 0.06); tone(750, 0.06, 'square', 0.06, null, 0.07); tone(1000, 0.1, 'square', 0.06, null, 0.14); },
 };
@@ -1017,6 +1076,8 @@ function onState(msg) {
   // The server leaves these lists out when they have not changed since the last snapshot.
   msg.obstacles ??= curr ? curr.obstacles : [];
   msg.loot ??= curr ? curr.loot : [];
+  msg.grenades ??= [];
+  if (msg.world) buildWorld(msg.world);
   if (msg.echo) pingMs = pingMs ? lerp(pingMs, performance.now() - msg.echo, 0.1) : performance.now() - msg.echo;
 
   if (curr) {
@@ -1177,19 +1238,21 @@ setInterval(() => {
   pendingBuy = 0;
   const ts = performance.now();
   const crouch = isCrouching();
+  const throwNow = pendingThrow;
+  pendingThrow = false;
   const jump = pendingJump;
   pendingJump = false;
   if (canMove()) {
     moveFor(pred, lastMove.dx, lastMove.dy, (ts - lastMove.at) / 1000); // the input that just ended
     // Predicted movement uses the speed the server will: slower while crouching.
-    const k = crouch ? CROUCH_SPEED : 1;
+    const k = inWaterAt(pred.x, pred.y) ? SWIM_SPEED : crouch ? CROUCH_SPEED : 1;
     pendingMoves.push({ ts, dx: dx * k, dy: dy * k });
     if (pendingMoves.length > 120) pendingMoves.shift();
     lastMove = { dx: dx * k, dy: dy * k, at: ts };
   } else {
     lastMove = { dx: 0, dy: 0, at: ts };
   }
-  sendToServer(JSON.stringify({ t: 'input', dx, dy, aim: yaw, shoot, ping, px, py, reload, switch: sw, revive, buy, ts, pitch, crouch, jump }));
+  sendToServer(JSON.stringify({ t: 'input', dx, dy, aim: yaw, shoot, ping, px, py, reload, switch: sw, revive, buy, ts, pitch, crouch, jump, throw: throwNow }));
 }, TICK_MS);
 
 // Local shots: play the weapon's sound, kick the viewmodel, flash the muzzle, and draw a tracer.
@@ -1292,6 +1355,39 @@ function syncBeacons() {
   }
 }
 
+// Grenades in the air, and the blast when one goes off.
+const grenadeMeshes = new Map();
+const grenadeGeo = new THREE.SphereGeometry(2.6, 12, 10);
+const matGrenade = new THREE.MeshStandardMaterial({ color: 0x3d5a2a, roughness: 0.5, metalness: 0.4 });
+const blastGeo = new THREE.SphereGeometry(1, 20, 14);
+const blasts = [];
+function syncGrenades(now) {
+  const seen = new Set();
+  for (const g of curr.grenades) {
+    seen.add(g.id);
+    let m = grenadeMeshes.get(g.id);
+    if (!m) { m = new THREE.Mesh(grenadeGeo, matGrenade); m.castShadow = true; scene.add(m); grenadeMeshes.set(g.id, m); }
+    m.position.set(g.x, g.z, g.y);
+    m.rotation.x = now / 90;
+  }
+  for (const [gid, m] of grenadeMeshes) {
+    if (seen.has(gid)) continue;
+    const ball = new THREE.Mesh(blastGeo, new THREE.MeshBasicMaterial({ color: 0xffb347, transparent: true, opacity: 0.85, depthWrite: false, fog: false }));
+    ball.position.copy(m.position);
+    scene.add(ball);
+    blasts.push({ ball, start: now });
+    SFX.boom(clamp(1 - m.position.distanceTo(camera.position) / 900, 0.15, 1));
+    scene.remove(m);
+    grenadeMeshes.delete(gid);
+  }
+  for (let i = blasts.length - 1; i >= 0; i--) {
+    const f = (now - blasts[i].start) / 380;
+    if (f >= 1) { scene.remove(blasts[i].ball); blasts[i].ball.material.dispose(); blasts.splice(i, 1); continue; }
+    blasts[i].ball.scale.setScalar(8 + (BLAST_RADIUS - 8) * Math.sqrt(f));
+    blasts[i].ball.material.opacity = 0.85 * (1 - f);
+  }
+}
+
 function syncPings() {
   while (pingMeshes.length) scene.remove(pingMeshes.pop());
   for (const pg of curr.pings) {
@@ -1321,7 +1417,7 @@ let walkAmount = 0;  // 0 standing, 1 at full speed, smoothed
 function updateViewmodel(now) {
   if (REPLAY) { for (const vm of viewmodels.values()) vm.visible = false; return; }
   const name = curr.ammo.weapon;
-  for (const [wName, vm] of viewmodels) vm.visible = wName === name && curr.me.alive;
+  for (const [wName, vm] of viewmodels) vm.visible = wName === name && curr.me.alive && !curr.me.swim && camera.fov > 50;
   const vm = viewmodelFor(name);
 
   if (name !== vmName) { vmName = name; vmRaise = 1; }
@@ -1350,7 +1446,12 @@ function updateCamera(meX, meY, dt) {
   walkAmount = lerp(walkAmount, clamp(speed / 180, 0, 1), Math.min(1, dt * 10));
   walkPhase += dt * 11 * walkAmount;
   // A downed player's view drops to the ground.
-  eyeHeight = lerp(eyeHeight, curr.me.downed ? 8 : isCrouching() ? CROUCH_EYE : EYE, Math.min(1, dt * 12));
+  eyeHeight = lerp(eyeHeight, curr.me.swim ? SWIM_EYE : curr.me.downed ? 8 : isCrouching() ? CROUCH_EYE : EYE, Math.min(1, dt * 12));
+  // The sniper scope narrows the view.
+  if (curr.ammo.weapon !== 'Sniper' || !curr.me.alive || curr.me.swim) scoped = false;
+  const fov = scoped ? 18 : 72;
+  if (Math.abs(camera.fov - fov) > 0.1) { camera.fov = lerp(camera.fov, fov, Math.min(1, dt * 14)); camera.updateProjectionMatrix(); }
+  for (const w of waterMeshes) w.position.y = 2.2 + Math.sin(performance.now() / 700 + w.position.x) * 0.25;
   // Your own jump is shown at once, with the same arc the server uses.
   if (jumpZ > 0 || jumpV > 0) {
     jumpZ += jumpV * dt;
@@ -1518,6 +1619,8 @@ function drawAmmo() {
     ctx.fillStyle = C.dim;
     ctx.font = font(9);
     ctx.fillText('[B] SHOP', x + 184, y + 84);
+    ctx.fillStyle = a.grenades ? C.warn : C.dim;
+    ctx.fillText(`[G] GRENADE x${a.grenades}`, x + 140, y + 60);
   }
 }
 
@@ -1531,7 +1634,8 @@ function drawHealth() {
   ctx.textAlign = 'left';
   ctx.fillStyle = color;
   ctx.font = font(11);
-  ctx.fillText(downed ? 'DOWNED // BLEEDING OUT' : REPLAY ? `SPECTATING ${curr.me.name.toUpperCase()}` : 'VITALS', x + 14, y + 17);
+  ctx.fillText(downed ? 'DOWNED // BLEEDING OUT' : REPLAY ? `SPECTATING ${curr.me.name.toUpperCase()}`
+    : curr.me.swim ? 'SWIMMING // NO WEAPONS' : curr.me.hidden ? 'HIDDEN IN BUSH' : curr.ammo.armor > 0 ? `VITALS // ARMOUR ${curr.ammo.armor}` : 'VITALS', x + 14, y + 17);
   ctx.textAlign = 'right';
   ctx.fillStyle = C.text;
   ctx.font = font(15, 800);
@@ -1609,6 +1713,18 @@ function drawRadar(now) {
   grad.addColorStop(1, 'rgba(111,243,255,0)');
   ctx.fillStyle = grad;
   ctx.fillRect(cx - r, cy - r, r * 2, r * 2);
+
+  // Lakes and bushes.
+  for (const l of world.lakes) {
+    const [lx, ly] = toScreen(l.x, l.y);
+    ctx.fillStyle = 'rgba(47,155,230,0.55)';
+    ctx.beginPath(); ctx.arc(lx, ly, l.r * k, 0, Math.PI * 2); ctx.fill();
+  }
+  for (const b of world.bushes) {
+    const [bx, by] = toScreen(b.x, b.y);
+    ctx.fillStyle = 'rgba(125,255,166,0.28)';
+    ctx.beginPath(); ctx.arc(bx, by, b.r * k, 0, Math.PI * 2); ctx.fill();
+  }
 
   // Safe zone edge.
   const [zx, zy] = toScreen(curr.zone.x, curr.zone.y);
@@ -1758,6 +1874,14 @@ function drawBigMap(now) {
     ctx.beginPath(); ctx.moveTo(x + p, y); ctx.lineTo(x + p, y + size); ctx.moveTo(x, y + p); ctx.lineTo(x + size, y + p); ctx.stroke();
     if (i < 8) { ctx.fillStyle = C.dim; ctx.fillText('ABCDEFGH'[i], x + p + 4, y + 11); ctx.fillText(String(i + 1), x + 4, y + p + 22); }
   }
+  for (const l of world.lakes) {
+    ctx.fillStyle = 'rgba(47,155,230,0.5)';
+    ctx.beginPath(); ctx.arc(x + l.x * k, y + l.y * k, l.r * k, 0, Math.PI * 2); ctx.fill();
+  }
+  for (const b of world.bushes) {
+    ctx.fillStyle = 'rgba(125,255,166,0.3)';
+    ctx.beginPath(); ctx.arc(x + b.x * k, y + b.y * k, Math.max(2, b.r * k), 0, Math.PI * 2); ctx.fill();
+  }
   for (const o of knownObstacles.values()) {
     if (o.k === 'tree') {
       ctx.fillStyle = 'rgba(125,255,166,0.5)';
@@ -1811,11 +1935,12 @@ function drawBigMap(now) {
 // ---------- Shop ----------
 let shopOpen = false;
 let shopRows = []; // touch targets: { slot, x, y, w, h }
-const WEAPON_NAMES = ['Pistol', 'SMG', 'Rifle', 'Shotgun', 'Sniper'];
-const WEAPON_NOTES = ['semi-auto sidearm', 'fast, close range', 'all-round automatic', '8 pellets, very close', 'one-shot headshots'];
+const WEAPON_NAMES = ['Pistol', 'SMG', 'Rifle', 'Shotgun', 'Sniper', 'Armour', 'Grenade'];
+const WEAPON_NOTES = ['semi-auto sidearm', 'fast, close range', 'all-round automatic', '8 pellets, very close', 'one-shot headshots, right-click to scope',
+  'halves body damage while it lasts', 'throw with G; carry up to 2'];
 function drawShop() {
   const a = curr.ammo;
-  const w = Math.min(460, VW - 24), rowH = 44, h = 86 + rowH * 5;
+  const w = Math.min(460, VW - 24), rowH = 40, h = 86 + rowH * 7;
   const x = VW / 2 - w / 2, y = Math.max(70, VH / 2 - h / 2);
   panel(x, y, w, h, 16, C.dim, 'rgba(5,14,26,0.92)');
   ctx.textAlign = 'left';
@@ -1826,10 +1951,12 @@ function drawShop() {
   ctx.fillStyle = C.gold;
   ctx.fillText(`CR ${a.credits}`, x + w - 18, y + 28);
   shopRows = [];
-  for (let i = 0; i < 5; i++) {
+  for (let i = 0; i < 7; i++) {
     const ry = y + 42 + i * rowH;
-    const owned = a.owned[i];
-    const price = owned ? a.ammoPrice : a.prices[i];
+    const gear = i >= 5;
+    const owned = gear ? false : a.owned[i];
+    const full = i === 5 ? a.armor >= 50 : i === 6 ? a.grenades >= 2 : false;
+    const price = gear ? a.gearPrices[i - 5] : owned ? a.ammoPrice : a.prices[i];
     const can = a.credits >= price;
     ctx.fillStyle = a.slot === i + 1 ? 'rgba(111,243,255,0.16)' : 'rgba(255,255,255,0.04)';
     ctx.fillRect(x + 12, ry, w - 24, rowH - 6);
@@ -1844,14 +1971,14 @@ function drawShop() {
     ctx.fillText(WEAPON_NOTES[i], x + 62, ry + 32);
     ctx.textAlign = 'right';
     ctx.font = font(12, 800);
-    ctx.fillStyle = owned ? C.good : can ? C.gold : C.bad;
-    ctx.fillText(owned ? `OWNED // AMMO ${price}` : `${price} CR`, x + w - 22, ry + 24);
+    ctx.fillStyle = owned || full ? C.good : can ? C.gold : C.bad;
+    ctx.fillText(full ? 'FULL' : owned ? `OWNED // AMMO ${price}` : i === 5 ? `${price} CR // ${a.armor}/50` : i === 6 ? `${price} CR // ${a.grenades}/2` : `${price} CR`, x + w - 22, ry + 24);
     shopRows.push({ slot: i + 1, x: x + 12, y: ry, w: w - 24, h: rowH - 6 });
   }
   ctx.textAlign = 'center';
   ctx.fillStyle = C.dim;
   ctx.font = font(10);
-  ctx.fillText(touchActive ? 'TAP A ROW TO BUY // TAP OUTSIDE TO CLOSE' : 'PRESS 1-5 TO BUY // [B] CLOSE // KILLS +300 CR',
+  ctx.fillText(touchActive ? 'TAP A ROW TO BUY // TAP OUTSIDE TO CLOSE' : 'PRESS 1-7 TO BUY // [B] CLOSE // KILLS +300 CR',
     VW / 2, y + h - 14);
 }
 
@@ -1887,6 +2014,29 @@ function drawTouchControls() {
   drawButton(SHOP_BTN, 'SHOP', C.gold, shopOpen ? 0.9 : 0.5);
   drawButton(JUMP_BTN, 'JUMP', C.main, 0.5);
   drawButton(CROUCH_BTN, 'CROUCH', C.main, crouchToggle ? 0.9 : 0.5);
+  drawButton(NADE_BTN, `NADE ${curr.ammo.grenades}`, C.warn, curr.ammo.grenades ? 0.6 : 0.25);
+  if (curr.ammo.weapon === 'Sniper') drawButton(SCOPE_BTN, 'SCOPE', C.main, scoped ? 0.9 : 0.5);
+}
+
+// The sniper scope: a round window with fine cross lines; everything outside it is dark.
+function drawScope() {
+  const cx = VW / 2, cy = VH / 2, r = Math.min(VW, VH) * 0.42;
+  ctx.fillStyle = 'rgba(2,6,12,0.94)';
+  ctx.beginPath();
+  ctx.rect(0, 0, VW, VH);
+  ctx.arc(cx, cy, r, 0, Math.PI * 2, true);
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(10,20,30,0.9)';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(cx - r, cy); ctx.lineTo(cx - 6, cy); ctx.moveTo(cx + 6, cy); ctx.lineTo(cx + r, cy);
+  ctx.moveTo(cx, cy - r); ctx.lineTo(cx, cy - 6); ctx.moveTo(cx, cy + 6); ctx.lineTo(cx, cy + r);
+  ctx.stroke();
+  ctx.fillStyle = C.bad;
+  ctx.fillRect(cx - 1, cy - 1, 2, 2);
+  ctx.strokeStyle = C.main;
+  ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.stroke();
 }
 
 function drawFeed() {
@@ -1912,7 +2062,8 @@ function drawOverlay(now) {
 
   drawFeed();
   if (curr.me.alive) {
-    if (!shopOpen && !bigMap && !REPLAY) { drawCrosshair(curr.me.bloom); drawHitMarker(now); }
+    if (camera.fov < 40 && !REPLAY) drawScope();
+    if (!shopOpen && !bigMap && !REPLAY) { if (camera.fov >= 40) drawCrosshair(curr.me.bloom); drawHitMarker(now); }
     if (!REPLAY) drawAmmo();
     drawHealth();
   }
@@ -2024,6 +2175,7 @@ function renderFrame(now, dt, gameMs) {
     syncLoot(now);
     syncBeacons();
     syncPings();
+    syncGrenades(now);
     updateWorld(meX, meY);
     updateCamera(meX, meY, dt);
     updateViewmodel(now);
@@ -2063,6 +2215,7 @@ async function loadReplay() {
     f.loot = loot;
     f.obstacles = obstacles;
   }
+  if (rep.world) buildWorld(rep.world);
   R = rep;
   followId = rep.frames[0].players[0].id;
   camYaw = rep.frames[0].players[0].aim;
@@ -2071,6 +2224,7 @@ async function loadReplay() {
 }
 
 const FAKE_AMMO = { weapon: 'Pistol', slot: 1, mag: 0, reserve: 0, reloading: false, reloadFrac: 0, auto: false, range: 0,
+  armor: 0, grenades: 0, gearPrices: [0, 0],
   credits: 0, owned: [true, false, false, false, false], prices: [0, 0, 0, 0, 0], ammoPrice: 0 };
 
 function replaySnap(i) {
@@ -2223,6 +2377,8 @@ if (new URLSearchParams(location.search).has('debug')) {
     draw: on => { renderOn = on; },
     shown: () => ({ x: shown.x, y: shown.y, predicting, pending: pendingMoves.length, ping: pingMs }),
     look: (a, p = 0) => { yaw = a; pitch = p; },
+    world: () => world,
+    ammo: () => curr.ammo,
     hold: (k, on) => { if (on) keys.add(k); else keys.delete(k); },
     // Low quality keeps software-rendered test browsers responsive while staging a shot.
     quality: q => { fxOn = q > 0; renderer.setPixelRatio(q > 0 ? DPR : 0.2); renderer.setSize(innerWidth, innerHeight); },

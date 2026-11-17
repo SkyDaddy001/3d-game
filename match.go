@@ -135,6 +135,9 @@ type Player struct {
 	grenades   int
 	wantThrow  bool
 	throwCool  float64
+	swim       bool    // in a lake: slow, low in the water, and unable to shoot
+	quiet      float64 // seconds since the player last fired
+	sentWorld  bool    // the fixed terrain has been delivered to this player
 	kills      int     // eliminations credited to this player
 	damage     float64 // total damage dealt to enemies
 	send       chan []byte
@@ -222,7 +225,9 @@ type PlayerView struct {
 	Kills  int     `json:"kills"`
 	Look   string  `json:"look,omitempty"` // avatar look code; empty for the default look
 	Crouch bool    `json:"crouch,omitempty"`
-	Z      float64 `json:"z,omitempty"` // height above the ground while jumping
+	Swim   bool    `json:"swim,omitempty"`
+	Hidden bool    `json:"hidden,omitempty"` // in a bush and not seen from a distance
+	Z      float64 `json:"z,omitempty"`      // height above the ground while jumping
 	Bleed  float64 `json:"bleed"`
 }
 
@@ -257,6 +262,7 @@ type Snapshot struct {
 	Ranked    bool         `json:"ranked"`
 	Round     *RoundView   `json:"round,omitempty"`    // set in rounds mode
 	Grenades  []*Grenade   `json:"grenades,omitempty"` // grenades in the air near the player
+	World     *WorldView   `json:"world,omitempty"`    // lakes and bushes; sent once
 }
 
 type Match struct {
@@ -292,6 +298,8 @@ type Match struct {
 	round      *roundState // set in rounds mode
 	rec        *recorder   // set while the match is being recorded for a replay
 	grenades   []*Grenade
+	lakes      []Circle
+	bushes     []Circle
 	resultSize int // what placements were measured against when the match finished
 }
 
@@ -358,6 +366,7 @@ func newMatchState(id string) *Match {
 			m.obstacles = append(m.obstacles, c)
 		}
 	}
+	m.addTerrain()
 	for i := 0; i < 80; i++ {
 		m.addLoot()
 	}
@@ -480,7 +489,7 @@ func (m *Match) spawnPoint() (float64, float64) {
 		r := math.Sqrt(rand.Float64()) * m.zoneR * 0.9
 		x = clamp(m.zoneX+r*math.Cos(a), playerRadius, worldSize-playerRadius)
 		y = clamp(m.zoneY+r*math.Sin(a), playerRadius, worldSize-playerRadius)
-		if !m.blocked(x, y) {
+		if !m.blocked(x, y) && !m.inWater(x, y) {
 			break
 		}
 	}
@@ -720,7 +729,12 @@ func (m *Match) step(dt float64) {
 			continue
 		}
 		speed := moveSpeed
-		if p.crouch {
+		p.swim = m.inWater(p.X, p.Y)
+		p.quiet = math.Min(p.quiet+dt, 10)
+		if p.swim { // both hands are busy: no shooting, throwing, crouching, or jumping
+			speed *= swimSpeed
+			p.wantShoot, p.wantThrow, p.wantJump, p.crouch = false, false, false, false
+		} else if p.crouch {
 			speed *= crouchSpeed
 		}
 		p.updateStance(dt)
@@ -1018,6 +1032,7 @@ func (m *Match) fire(p *Player) {
 		return
 	}
 	p.mags[p.weapon]--
+	p.quiet = 0
 	m.recordShot(p, w.Range)
 
 	hitAny, hitHead := false, false
@@ -1218,7 +1233,7 @@ func (p *Player) view() PlayerView {
 		Weapon: weapons[p.weapon].Name,
 		ID:     p.ID, Name: p.Name, Team: p.Team, X: p.X, Y: p.Y,
 		HP: p.HP, Alive: p.Alive, Place: p.Place, Bloom: p.bloom,
-		Downed: p.downed, Bleed: p.bleed, Aim: p.Aim, Kills: p.kills, Look: p.look, Crouch: p.crouch && !p.downed, Z: math.Round(p.Z*10) / 10,
+		Downed: p.downed, Bleed: p.bleed, Aim: p.Aim, Kills: p.kills, Look: p.look, Crouch: p.crouch && !p.downed, Swim: p.swim, Z: math.Round(p.Z*10) / 10,
 	}
 }
 
@@ -1244,6 +1259,7 @@ func (m *Match) broadcast() {
 			Pings: []Ping{}, HitSeq: me.hitSeq, HitKind: me.hitKind, Ammo: me.ammoView(),
 			Ranked: m.Ranked,
 		}
+		snap.Me.Hidden = me.Alive && me.quiet >= bushQuiet && !me.swim && m.inBush(me.X, me.Y)
 		if m.round != nil {
 			snap.Round = m.roundView(me)
 		}
@@ -1262,7 +1278,7 @@ func (m *Match) broadcast() {
 			if q == me || !q.Alive {
 				continue
 			}
-			if q.Team == me.Team && me.Team != 0 || near(me, q.X, q.Y) {
+			if q.Team == me.Team && me.Team != 0 || near(me, q.X, q.Y) && !m.concealed(me, q) {
 				snap.Players = append(snap.Players, q.view())
 			}
 			if q.revealLeft > 0 && !q.gone {
@@ -1294,11 +1310,15 @@ func (m *Match) broadcast() {
 		if obstSig != me.obstSig {
 			snap.Obstacles = &obstacles
 		}
+		if !me.sentWorld {
+			snap.World = m.worldView()
+		}
 		msg, _ := json.Marshal(snap)
 		select {
 		case me.send <- msg:
 			// Only now does the client have these lists; a dropped snapshot must be sent again.
 			me.lootSig, me.obstSig = lootSig, obstSig
+			me.sentWorld = true
 		default: // slow client: drop this snapshot, the next one supersedes it
 		}
 	}

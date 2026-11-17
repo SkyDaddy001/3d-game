@@ -39,6 +39,8 @@ func (r Rect) top() float64 {
 // bodyTop is the height of the top of the player's body above their feet.
 func (p *Player) bodyTop() float64 {
 	switch {
+	case p.swim:
+		return swimTop
 	case p.downed:
 		return downedTop
 	case p.crouch:
@@ -49,6 +51,9 @@ func (p *Player) bodyTop() float64 {
 
 // eye is the height above the ground that the player's shots start from.
 func (p *Player) eye() float64 {
+	if p.swim {
+		return p.Z + swimEye
+	}
 	if p.crouch {
 		return p.Z + crouchEye
 	}
@@ -58,7 +63,7 @@ func (p *Player) eye() float64 {
 // headFrom is the height above the feet where the head begins. A downed player has no head zone.
 func (p *Player) headFrom() float64 {
 	switch {
-	case p.downed:
+	case p.downed, p.swim:
 		return math.Inf(1)
 	case p.crouch:
 		return crouchTop - crouchBand

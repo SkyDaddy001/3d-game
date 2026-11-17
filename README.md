@@ -262,3 +262,21 @@ milliseconds and feel a slow connection.
   and large crates and containers hide a standing player; buildings and trees block everything.
 - A downed player lies flat, so you must aim down to finish them.
 - Bots aim up and down, and cannot see over cover that is taller than their eyes.
+
+## Lakes, bushes, and grass
+
+- **Lakes:** three per map, away from the middle. In water you swim at half speed, sit low (only
+  head and shoulders show), and cannot shoot, throw, crouch, or jump. Nobody spawns in a lake.
+- **Bushes:** large enough to stand in. A player in a bush is hidden from enemies more than 70
+  units away, until they fire. Bushes do not stop movement or bullets. Bots are fooled too.
+- **Grass and flowers** are decoration and are left out of the water.
+
+## Armour, grenades, and the sniper scope
+
+- **Armour** (shop slot 6, 700): 50 points that take half of body damage until used up.
+  Headshots ignore it.
+- **Grenades** (slot 7, 400 each, carry 2): throw with G or the NADE button. Aim up to throw
+  further. They stop at walls and explode after 1.6 seconds, hurting enemies and the thrower, but
+  not teammates or anyone behind cover tall enough to hide them. They also break crates.
+- **Scope:** with the sniper, hold the right mouse button, press Z, or tap SCOPE.
+- Bots buy armour once they own a rifle. They do not throw grenades.

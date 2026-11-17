@@ -53,6 +53,7 @@ type Replay struct {
 	Duration float64       `json:"duration"` // seconds of game time
 	FrameMS  int           `json:"frameMs"`
 	Created  int64         `json:"created"`
+	World    *WorldView    `json:"world"`
 	Frames   []ReplayFrame `json:"frames"`
 }
 
@@ -161,7 +162,7 @@ func SimulateBotMatch(id string, bots int, mode string) *Replay {
 	m.capture(0, true)
 	return &Replay{
 		ID: id, Mode: mode, Players: bots, Winner: m.winner, Finished: m.over,
-		Duration: round1(m.rec.clock), FrameMS: replayFrameMS, Created: time.Now().Unix(), Frames: m.rec.frames,
+		Duration: round1(m.rec.clock), FrameMS: replayFrameMS, Created: time.Now().Unix(), World: m.worldView(), Frames: m.rec.frames,
 	}
 }
 

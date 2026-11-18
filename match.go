@@ -274,6 +274,7 @@ type Snapshot struct {
 }
 
 type Match struct {
+	rng       *rand.Rand // the match's own random source: bots and the map use it, so tests can fix it
 	mu        sync.Mutex
 	ID        string
 	players   map[int]*Player
@@ -336,6 +337,7 @@ func NewMatch(id string) *Match {
 func newMatchState(id string) *Match {
 	m := &Match{
 		ID:        id,
+		rng:       rand.New(rand.NewSource(time.Now().UnixNano())),
 		players:   map[int]*Player{},
 		loot:      map[int]*Loot{},
 		idleLimit: defaultIdleTimeout,

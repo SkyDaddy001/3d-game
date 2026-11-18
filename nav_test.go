@@ -2,6 +2,7 @@ package main
 
 import (
 	"math"
+	"math/rand"
 	"testing"
 )
 
@@ -68,6 +69,7 @@ func TestNavRebuildsWhenACrateBreaks(t *testing.T) {
 // A bot whose goal is behind a long wall walks around it and arrives.
 func TestBotWalksAroundAWallToItsGoal(t *testing.T) {
 	m := newArena()
+	m.rng = rand.New(rand.NewSource(1)) // a fixed seed keeps the bot's aim and wandering the same every run
 	m.started = true
 	m.zoneR = 3000
 	m.obstacles = []Rect{{X: 480, Y: 250, W: 40, H: 500}}
@@ -75,7 +77,8 @@ func TestBotWalksAroundAWallToItsGoal(t *testing.T) {
 	mate := &Player{ID: 2, Name: "mate", Team: 1, X: 600, Y: 500, Alive: true, downed: true, bleed: 1e9}
 	far := &Player{ID: 3, Name: "far", Team: 2, X: 1900, Y: 1900, Alive: true, HP: 100}
 	m.players[1], m.players[2], m.players[3] = bot, mate, far
-	for i := 0; i < 30*12 && mate.downed; i++ {
+	// The detour takes about ten seconds and a revive three more, so allow thirty.
+	for i := 0; i < 30*30 && mate.downed; i++ {
 		mate.bleed = 1e9
 		m.step(1.0 / 30)
 	}

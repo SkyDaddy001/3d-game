@@ -60,8 +60,8 @@ func (m *Match) addBotsLocked(size int) {
 		id := m.newID()
 		m.players[id] = &Player{
 			ID: id, Name: name, HP: 100, Alive: true, X: x, Y: y,
-			look: Look{Custom: true, Hair: rand.Intn(len(hairOptions)), Skin: rand.Intn(len(skinOptions)), Shirt: rand.Intn(5), Hat: rand.Intn(2)}.Code(),
-			bot:  &botState{strafeDir: 1, wanderA: rand.Float64() * 2 * math.Pi, lastX: x, lastY: y},
+			look: Look{Custom: true, Hair: m.random().Intn(len(hairOptions)), Skin: m.random().Intn(len(skinOptions)), Shirt: m.random().Intn(5), Hat: m.random().Intn(2)}.Code(),
+			bot:  &botState{strafeDir: 1, wanderA: m.random().Float64() * 2 * math.Pi, lastX: x, lastY: y},
 		}
 	}
 }
@@ -101,8 +101,8 @@ func (m *Match) thinkBots(dt float64) {
 		}
 		if b.stuck > 0.25 {
 			b.stuck = 0
-			b.detourLeft = 0.5 + rand.Float64()*0.6
-			b.wanderA = rand.Float64() * 2 * math.Pi
+			b.detourLeft = 0.5 + m.random().Float64()*0.6
+			b.wanderA = m.random().Float64() * 2 * math.Pi
 		}
 		b.detourLeft -= dt
 
@@ -128,8 +128,8 @@ func (m *Match) thinkBots(dt float64) {
 
 		if target != nil {
 			aim := math.Atan2(target.Y-p.Y, target.X-p.X)
-			p.Aim = aim + rand.NormFloat64()*botAimError
-			p.Pitch = pitchTo(p, target) + rand.NormFloat64()*botAimError*0.4
+			p.Aim = aim + m.random().NormFloat64()*botAimError
+			p.Pitch = pitchTo(p, target) + m.random().NormFloat64()*botAimError*0.4
 			b.seen += dt
 			if b.seen >= botReact && m.elapsed >= botGrace && !m.Practice {
 				// Tap the trigger: pressed for part of each cycle, so every weapon type fires.
@@ -144,7 +144,7 @@ func (m *Match) thinkBots(dt float64) {
 			b.strafeLeft -= dt
 			if b.strafeLeft <= 0 {
 				b.strafeDir = -b.strafeDir
-				b.strafeLeft = 0.5 + rand.Float64()
+				b.strafeLeft = 0.5 + m.random().Float64()
 			}
 			mx, my = -math.Sin(aim)*b.strafeDir, math.Cos(aim)*b.strafeDir
 			switch {
@@ -167,7 +167,7 @@ func (m *Match) thinkBots(dt float64) {
 				if b.wanderLeft <= 0 || math.Hypot(b.roam.X-p.X, b.roam.Y-p.Y) < 30 ||
 					math.Hypot(b.roam.X-m.zoneX, b.roam.Y-m.zoneY) > m.zoneR*0.8 {
 					b.roam.X, b.roam.Y = m.spawnPoint()
-					b.wanderLeft = 10 + rand.Float64()*8
+					b.wanderLeft = 10 + m.random().Float64()*8
 				}
 				gx, gy = b.roam.X, b.roam.Y
 			}
@@ -288,4 +288,13 @@ func (m *Match) spreadSpawn() (float64, float64) {
 		}
 	}
 	return bestX, bestY
+}
+
+// random returns the match's random source. A match built without one (in tests) gets a fixed seed,
+// so its bots behave the same from run to run.
+func (m *Match) random() *rand.Rand {
+	if m.rng == nil {
+		m.rng = rand.New(rand.NewSource(1))
+	}
+	return m.rng
 }

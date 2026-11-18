@@ -201,6 +201,10 @@ Choose **Rounds** as the team setting of a custom room for a team-versus-team ma
 - Everyone starts with 1,000 credits. A round win pays 1,400, a loss 900, and an elimination 300.
   Credits carry over. Survivors keep their weapons; anyone who died keeps only the pistol.
 - First team to 5 rounds wins the match. If a whole team leaves, the other team wins.
+- **Pick a side:** before the match starts, a player can choose Alpha or Bravo. Picks are honoured
+  in player order while that side has room (each team holds half the room, rounded up); anyone
+  who picked a full side is moved to the other team. Players who pick nothing fill the smaller team.
+- **Play rounds:** the Play menu has a Rounds option that joins a rounds room for quick play.
 
 ## Replays of bot matches
 

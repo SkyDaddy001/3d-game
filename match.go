@@ -87,62 +87,65 @@ var weapons = []Weapon{
 }
 
 type Player struct {
-	ID         int
-	Name       string
-	Team       int
-	X, Y, Aim  float64
-	HP         float64
-	Alive      bool
-	Place      int // final placement, set when the player is eliminated
-	DX, DY     float64
-	wantShoot  bool
-	chatAt     time.Time // when this player last sent a quick chat message
-	wantPing   bool
-	pingAt     Point
-	cooldown   float64
-	pingCool   float64
-	bloom      float64 // current spread in radians; grows while firing, recovers over time
-	revealLeft float64 // seconds left during which this player is shown to everyone
-	weapon     int     // index into weapons
-	mags       [5]int  // rounds in the magazine, per weapon
-	reserves   [5]int  // spare rounds, per weapon
-	armed      bool    // ammo is initialized on first use
-	reloadLeft float64 // seconds left in a reload; zero when not reloading
-	prevShoot  bool    // whether fire was held last tick, for semi-auto weapons
-	wantReload bool
-	switchTo   int    // 1-based slot requested this tick, zero for none
-	hitSeq     int    // increments on every hit this player lands, for hit markers
-	hitKind    string // "body" or "head" for the most recent hit
-	gone       bool
-	downed     bool    // on the ground: can be revived by a teammate, bleeds out otherwise
-	bleed      float64 // seconds left before a downed player bleeds out
-	reviveProg float64 // seconds of revive progress from a nearby teammate
-	hurtCool   float64 // seconds since last damage; health recovers when it reaches zero
-	wantRevive bool
-	bot        *botState // set for computer-controlled players; nil for people
-	owned      [5]bool   // weapons the player has; the pistol from the start, others bought
-	credits    int
-	look       string // avatar look code shown to other players
-	wantBuy    int
-	lootSig    uint64  // signature of the pickup list last delivered to this player
-	obstSig    uint64  // signature of the obstacle list last delivered
-	echo       float64 // client clock value from the latest input, echoed back for ping
-	Pitch      float64 // up or down aim in radians; positive is up
-	Z          float64 // height of the feet above the ground while jumping
-	vz         float64
-	crouch     bool
-	wantJump   bool
-	armor      float64 // absorbs part of body damage until used up
-	grenades   int
-	wantThrow  bool
-	throwCool  float64
-	wantSide   int     // rounds: the side picked before the start (1 Alpha, 2 Bravo)
-	swim       bool    // in a lake: slow, low in the water, and unable to shoot
-	quiet      float64 // seconds since the player last fired
-	sentWorld  bool    // the fixed terrain has been delivered to this player
-	kills      int     // eliminations credited to this player
-	damage     float64 // total damage dealt to enemies
-	send       chan []byte
+	ID          int
+	Name        string
+	Team        int
+	X, Y, Aim   float64
+	HP          float64
+	Alive       bool
+	Place       int // final placement, set when the player is eliminated
+	DX, DY      float64
+	wantShoot   bool
+	chatAt      time.Time // when this player last sent a quick chat message
+	wantPing    bool
+	pingAt      Point
+	cooldown    float64
+	pingCool    float64
+	bloom       float64 // current spread in radians; grows while firing, recovers over time
+	revealLeft  float64 // seconds left during which this player is shown to everyone
+	weapon      int     // index into weapons
+	mags        [5]int  // rounds in the magazine, per weapon
+	reserves    [5]int  // spare rounds, per weapon
+	armed       bool    // ammo is initialized on first use
+	reloadLeft  float64 // seconds left in a reload; zero when not reloading
+	prevShoot   bool    // whether fire was held last tick, for semi-auto weapons
+	wantReload  bool
+	switchTo    int    // 1-based slot requested this tick, zero for none
+	hitSeq      int    // increments on every hit this player lands, for hit markers
+	hitKind     string // "body" or "head" for the most recent hit
+	gone        bool
+	downed      bool    // on the ground: can be revived by a teammate, bleeds out otherwise
+	bleed       float64 // seconds left before a downed player bleeds out
+	reviveProg  float64 // seconds of revive progress from a nearby teammate
+	hurtCool    float64 // seconds since last damage; health recovers when it reaches zero
+	wantRevive  bool
+	bot         *botState // set for computer-controlled players; nil for people
+	owned       [5]bool   // weapons the player has; the pistol from the start, others bought
+	credits     int
+	look        string // avatar look code shown to other players
+	wantBuy     int
+	lootSig     uint64  // signature of the pickup list last delivered to this player
+	obstSig     uint64  // signature of the obstacle list last delivered
+	echo        float64 // client clock value from the latest input, echoed back for ping
+	Pitch       float64 // up or down aim in radians; positive is up
+	Z           float64 // height of the feet above the ground while jumping
+	vz          float64
+	crouch      bool
+	wantJump    bool
+	armor       float64 // absorbs part of body damage until used up
+	grenades    int
+	wantThrow   bool
+	throwCool   float64
+	wantSide    int     // rounds: the side picked before the start (1 Alpha, 2 Bravo)
+	swim        bool    // in a lake: slow, low in the water, and unable to shoot
+	quiet       float64 // seconds since the player last fired
+	sentWorld   bool    // the fixed terrain has been delivered to this player
+	kills       int     // eliminations credited to this player
+	damage      float64 // total damage dealt to enemies
+	send        chan []byte
+	voice       chan []byte // voice packets for this player to hear
+	voiceWindow time.Time
+	voiceCount  int
 }
 
 // Controls is one client's input for a tick.
@@ -460,7 +463,8 @@ func (m *Match) Join(name string) (*Player, bool) {
 	p := &Player{
 		ID: id, Name: name, HP: 100, Alive: true,
 		X: x, Y: y,
-		send: make(chan []byte, 16),
+		send:  make(chan []byte, 16),
+		voice: make(chan []byte, voiceQueueDepth),
 	}
 	m.players[id] = p
 	return p, true

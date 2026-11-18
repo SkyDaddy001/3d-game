@@ -384,7 +384,7 @@ func (s *Server) serveWS(w http.ResponseWriter, r *http.Request) {
 	}
 	defer c.CloseNow()
 	defer m.Leave(p)
-	c.SetReadLimit(512)
+	c.SetReadLimit(voiceMaxPacket + 16)
 
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
@@ -397,6 +397,11 @@ func (s *Server) serveWS(w http.ResponseWriter, r *http.Request) {
 					cancel()
 					return
 				}
+			case f := <-p.voice:
+				if err := c.Write(ctx, websocket.MessageBinary, f); err != nil {
+					cancel()
+					return
+				}
 			case <-ctx.Done():
 				return
 			}
@@ -404,9 +409,13 @@ func (s *Server) serveWS(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	for {
-		_, data, err := c.Read(ctx)
+		typ, data, err := c.Read(ctx)
 		if err != nil {
 			return
+		}
+		if typ == websocket.MessageBinary {
+			m.Voice(p, data)
+			continue
 		}
 		var in inputMsg
 		if json.Unmarshal(data, &in) != nil {

@@ -49,6 +49,8 @@ const defaultBotFill = 8
 
 type inputMsg struct {
 	T      string  `json:"t"`
+	Chat   int     `json:"k"`    // quick chat preset index, for "chat" messages
+	Team   bool    `json:"team"` // quick chat audience: teammates (true) or nearby players (false)
 	DX     float64 `json:"dx"`
 	DY     float64 `json:"dy"`
 	Aim    float64 `json:"aim"`
@@ -407,7 +409,14 @@ func (s *Server) serveWS(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		var in inputMsg
-		if json.Unmarshal(data, &in) != nil || in.T != "input" {
+		if json.Unmarshal(data, &in) != nil {
+			continue
+		}
+		if in.T == "chat" {
+			m.Chat(p, in.Chat, in.Team)
+			continue
+		}
+		if in.T != "input" {
 			continue
 		}
 		m.Input(p, Controls{

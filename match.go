@@ -96,6 +96,7 @@ type Player struct {
 	Place      int // final placement, set when the player is eliminated
 	DX, DY     float64
 	wantShoot  bool
+	chatAt     time.Time // when this player last sent a quick chat message
 	wantPing   bool
 	pingAt     Point
 	cooldown   float64
@@ -266,6 +267,7 @@ type Snapshot struct {
 	World     *WorldView   `json:"world,omitempty"`    // lakes and bushes; sent once
 	Lobby     *LobbyView   `json:"lobby,omitempty"`    // set while waiting for the match to start
 	Shots     []ShotView   `json:"shots,omitempty"`    // other players' shots within earshot since the last snapshot
+	Chat      []ChatView   `json:"chat,omitempty"`     // quick chat this player hears since the last snapshot
 }
 
 type Match struct {
@@ -303,6 +305,7 @@ type Match struct {
 	rec        *recorder   // set while the match is being recorded for a replay
 	nav        *navGrid    // walkable cells for bot routes; rebuilt when obstacles change
 	shots      []ShotView  // shots fired since the last broadcast
+	chats      []chatMsg   // quick chat sent since the last broadcast
 	grenades   []*Grenade
 	lakes      []Circle
 	bushes     []Circle
@@ -1285,6 +1288,7 @@ func (m *Match) broadcast() {
 			}
 			snap.Lobby = lv
 		}
+		snap.Chat = m.chatsFor(me)
 		snap.Me.Hidden = me.Alive && me.quiet >= bushQuiet && !me.swim && m.inBush(me.X, me.Y)
 		if m.round != nil {
 			snap.Round = m.roundView(me)
@@ -1349,6 +1353,7 @@ func (m *Match) broadcast() {
 		}
 	}
 	m.shots = m.shots[:0]
+	m.chats = m.chats[:0]
 }
 
 func clamp(v, lo, hi float64) float64 {

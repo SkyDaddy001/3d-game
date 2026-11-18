@@ -101,3 +101,9 @@ ul.friends li { display: flex; align-items: center; justify-content: space-betwe
 form .row { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 8px; }
 form .row select { width: auto; flex: 1; margin-top: 0; }
 
+
+/* Friend presence */
+.presence { font-size: 12px; font-weight: 700; margin-left: 6px; }
+.presence.on { color: #1a8f3a; }
+.presence.busy { color: #b07100; }
+.presence.off { color: #7a8699; }

@@ -160,7 +160,7 @@ func (s *Server) friendsList(w http.ResponseWriter, r *http.Request) {
 	b.WriteString(`<ul class="friends">`)
 	for _, f := range friends {
 		name := html.EscapeString(f)
-		b.WriteString(`<li><span>` + name + `</span> <button class="mini" hx-post="/friends/remove" hx-vals='{"usertag":"` + name +
+		b.WriteString(`<li><span>` + name + `</span> ` + s.presenceLine(f) + ` <button class="mini" hx-post="/friends/remove" hx-vals='{"usertag":"` + name +
 			`"}' hx-swap="none" hx-confirm="Remove ` + name + ` from your friends?">Remove</button></li>`)
 	}
 	b.WriteString("</ul>")

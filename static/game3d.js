@@ -880,6 +880,8 @@ addEventListener('keydown', e => {
   if (k === 'tab' || k === 'n') { e.preventDefault(); bigMap = !bigMap; shopOpen = false; }
   if (k === 'escape') { shopOpen = false; bigMap = false; helpOpen = false; }
   if (k === 'h' || k === '?') { if (helpOpen) closeHelp(); else helpOpen = true; }
+  if (k === 't') startTalk(true);
+  if (k === 'y') startTalk(false);
   if (k === 'v' || k === 'x') toggleChatWheel(k === 'v' ? 'team' : 'near');
   if (chatWheel && k >= '1' && k <= String(CHAT_PRESETS.length)) { sendChat(Number(k) - 1); return; }
   if (chatWheel && k === 'escape') chatWheel = null;
@@ -889,7 +891,11 @@ addEventListener('keydown', e => {
     pendingPing = { x: curr.me.x + Math.cos(yaw) * 300, y: curr.me.y + Math.sin(yaw) * 300 };
   }
 });
-addEventListener('keyup', e => keys.delete(e.key.toLowerCase()));
+addEventListener('keyup', e => {
+  const k = e.key.toLowerCase();
+  keys.delete(k);
+  if (k === 't' || k === 'y') stopTalk();
+});
 overlay.addEventListener('wheel', e => {
   if (!curr) return;
   requestSwitch(nextOwned(e.deltaY > 0 ? 1 : -1));
@@ -1195,7 +1201,9 @@ function sendToServer(text) {
   if (LAG) setTimeout(() => { if (ws.readyState === WebSocket.OPEN) ws.send(text); }, LAG);
   else ws.send(text);
 }
+if (ws) ws.binaryType = 'arraybuffer';
 if (ws) ws.onmessage = e => {
+  if (typeof e.data !== 'string') { onVoice(e.data); return; }
   const msg = JSON.parse(e.data);
   if (LAG) setTimeout(() => onState(msg), LAG); else onState(msg);
 };
@@ -2108,6 +2116,120 @@ function closeHelp() {
   try { localStorage.setItem('arena-seen-help', '1'); } catch { /* storage unavailable */ }
 }
 document.getElementById('help')?.addEventListener('click', () => { if (helpOpen) closeHelp(); else helpOpen = true; });
+// ---------- Voice ----------
+// Hold T to talk to your team (heard from anywhere), hold Y to talk to nearby players.
+// The microphone is encoded with Opus in the browser and relayed by the server (see voice.go).
+// Needs Chromium-based browsers, which provide MediaStreamTrackProcessor and WebCodecs.
+const voiceSupported = typeof MediaStreamTrackProcessor !== 'undefined' && typeof AudioEncoder !== 'undefined'
+  && typeof AudioDecoder !== 'undefined' && typeof EncodedAudioChunk !== 'undefined';
+const VOICE_RANGE = 900;   // matches hearRange on the server
+const VOICE_FLAG_TEAM = 1, VOICE_FLAG_MUFFLE = 2;
+let voiceMode = null;       // 0 = team, 1 = nearby, while the key is held
+let micStream = null, micReader = null, voiceEnc = null;
+const voiceDecoders = new Map(), voiceNext = new Map(), voiceFlags = new Map();
+
+async function startTalk(team) {
+  if (!voiceSupported || !ws || voiceMode !== null || !curr?.started) return;
+  if (!navigator.mediaDevices?.getUserMedia) return;
+  ensureAudio();
+  voiceMode = team ? 0 : 1;
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true } });
+  } catch { voiceMode = null; return; }
+  if (voiceMode === null) { stream.getTracks().forEach(t => t.stop()); return; } // key released while asking
+  micStream = stream;
+  micReader = new MediaStreamTrackProcessor({ track: stream.getAudioTracks()[0] }).readable.getReader();
+  voiceEnc = new AudioEncoder({
+    output: chunk => {
+      if (voiceMode === null || ws.readyState !== WebSocket.OPEN) return;
+      const pkt = new Uint8Array(chunk.byteLength);
+      chunk.copyTo(pkt);
+      const frame = new Uint8Array(pkt.length + 1);
+      frame[0] = voiceMode;
+      frame.set(pkt, 1);
+      ws.send(frame.buffer);
+    },
+    error: () => stopTalk(),
+  });
+  voiceEnc.configure({ codec: 'opus', sampleRate: 48000, numberOfChannels: 1, bitrate: 24000 });
+  pumpMic();
+}
+async function pumpMic() {
+  while (voiceMode !== null && micReader) {
+    const { value, done } = await micReader.read();
+    if (done) break;
+    if (voiceEnc && voiceEnc.state === 'configured') voiceEnc.encode(value);
+    value.close();
+  }
+}
+function stopTalk() {
+  voiceMode = null;
+  micReader?.cancel().catch(() => {});
+  micReader = null;
+  micStream?.getTracks().forEach(t => t.stop());
+  micStream = null;
+  try { voiceEnc?.close(); } catch { /* already closed */ }
+  voiceEnc = null;
+}
+// A relayed frame: kind (1), flags, sender ID (two bytes), then the Opus packet.
+function onVoice(buf) {
+  const u = new Uint8Array(buf);
+  if (u.length < 5 || u[0] !== 1 || !audioCtx) return;
+  const id = (u[2] << 8) | u[3];
+  let dec = voiceDecoders.get(id);
+  if (!dec) {
+    dec = new AudioDecoder({
+      output: d => playVoice(id, d),
+      error: () => { voiceDecoders.delete(id); },
+    });
+    dec.configure({ codec: 'opus', sampleRate: 48000, numberOfChannels: 1 });
+    voiceDecoders.set(id, dec);
+  }
+  voiceFlags.set(id, u[1]);
+  dec.decode(new EncodedAudioChunk({ type: 'key', timestamp: performance.now() * 1000, data: u.subarray(4) }));
+}
+function playVoice(id, d) {
+  const n = d.numberOfFrames, pcm = new Float32Array(n);
+  d.copyTo(pcm, { planeIndex: 0 });
+  d.close();
+  if (!audioCtx || muted) return;
+  const flags = voiceFlags.get(id) || 0;
+  let gain = 1.2, pan = 0;
+  if (!(flags & VOICE_FLAG_TEAM)) {
+    // Nearby voice fades and pans with distance, like other sounds.
+    const p = curr?.players?.find(q => q.id === id);
+    if (!p) return;
+    const dx = p.x - camera.position.x, dy = p.y - camera.position.z, dist = Math.hypot(dx, dy);
+    if (dist > VOICE_RANGE) return;
+    gain *= Math.pow(1 - dist / VOICE_RANGE, 1.6);
+    pan = dist < 1 ? 0 : clamp((dx * -Math.sin(yaw) + dy * Math.cos(yaw)) / dist, -1, 1) * 0.9;
+  }
+  const buf = audioCtx.createBuffer(1, n, 48000);
+  buf.copyToChannel(pcm, 0);
+  const src = audioCtx.createBufferSource();
+  src.buffer = buf;
+  let node = src;
+  if (flags & VOICE_FLAG_MUFFLE) { // behind cover: duller and quieter
+    const lp = audioCtx.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.value = 700;
+    node.connect(lp);
+    node = lp;
+    gain *= 0.6;
+  }
+  const g = audioCtx.createGain();
+  g.gain.value = gain;
+  const sp = audioCtx.createStereoPanner();
+  sp.pan.value = pan;
+  node.connect(g).connect(sp).connect(audioCtx.destination);
+  // Chain each speaker's packets so they play back to back; restart if the queue runs too far behind.
+  let t = Math.max(audioCtx.currentTime, voiceNext.get(id) || 0);
+  if (t - audioCtx.currentTime > 0.3) t = audioCtx.currentTime;
+  src.start(t);
+  voiceNext.set(id, t + buf.duration);
+}
+
 // ---------- Quick chat ----------
 // V opens the team wheel, X the nearby wheel. Press 1-8 to send a preset; Esc or the same key closes it.
 // The list must match quickChats in chat.go.
@@ -2159,7 +2281,7 @@ const HELP_KEYS = [
   ['Move', 'W A S D'], ['Look', 'Mouse'], ['Fire', 'Left click or F'], ['Scope (sniper)', 'Right click or Z'],
   ['Jump', 'Space'], ['Crouch', 'Hold C or Ctrl'], ['Reload', 'R'], ['Switch weapon', '1-5 or wheel'],
   ['Shop', 'B, then 1-7'], ['Grenade', 'G'], ['Revive teammate', 'Hold E'], ['Ping', 'Q'],
-  ['Quick chat', 'V team, X nearby, then 1-8'], ['Full map', 'Tab or N'], ['Mute', 'M'], ['This screen', 'H'],
+  ['Quick chat', 'V team, X nearby, then 1-8'], ['Team talk', 'Hold T'], ['Nearby talk', 'Hold Y'], ['Full map', 'Tab or N'], ['Mute', 'M'], ['This screen', 'H'],
 ];
 const HELP_TOUCH = [
   ['Move', 'Left stick'], ['Look', 'Drag anywhere'], ['Fire, reload, swap', 'Right buttons'],

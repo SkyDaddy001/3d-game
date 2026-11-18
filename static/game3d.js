@@ -880,6 +880,9 @@ addEventListener('keydown', e => {
   if (k === 'tab' || k === 'n') { e.preventDefault(); bigMap = !bigMap; shopOpen = false; }
   if (k === 'escape') { shopOpen = false; bigMap = false; helpOpen = false; }
   if (k === 'h' || k === '?') { if (helpOpen) closeHelp(); else helpOpen = true; }
+  if (k === 'v' || k === 'x') toggleChatWheel(k === 'v' ? 'team' : 'near');
+  if (chatWheel && k >= '1' && k <= String(CHAT_PRESETS.length)) { sendChat(Number(k) - 1); return; }
+  if (chatWheel && k === 'escape') chatWheel = null;
   if (shopOpen && k >= '1' && k <= '7') pendingBuy = Number(k);
   else if (k >= '1' && k <= '5') requestSwitch(Number(k));
   if (k === 'q' && curr && curr.me.alive) {
@@ -1111,6 +1114,7 @@ function onState(msg) {
   msg.loot ??= curr ? curr.loot : [];
   msg.grenades ??= [];
   if (msg.world) buildWorld(msg.world);
+  if (msg.chat?.length) hearChat(msg.chat);
   // Other players' shots: a tracer, and the weapon's sound from where it was fired.
   for (const sh of msg.shots ?? []) {
     if (window.__arena) window.__shotsHeard = (window.__shotsHeard || 0) + 1;
@@ -2104,11 +2108,58 @@ function closeHelp() {
   try { localStorage.setItem('arena-seen-help', '1'); } catch { /* storage unavailable */ }
 }
 document.getElementById('help')?.addEventListener('click', () => { if (helpOpen) closeHelp(); else helpOpen = true; });
+// ---------- Quick chat ----------
+// V opens the team wheel, X the nearby wheel. Press 1-8 to send a preset; Esc or the same key closes it.
+// The list must match quickChats in chat.go.
+const CHAT_PRESETS = ['Enemy spotted', 'Need help', 'On my way', 'Hold this position',
+  'Nice shot', 'Going for loot', 'Cover me', 'Thanks'];
+let chatWheel = null; // 'team', 'near', or null when closed
+const chatFeed = []; // messages heard recently: { from, team, text, at }
+const CHAT_SHOW_MS = 5000;
+
+function toggleChatWheel(kind) { chatWheel = chatWheel === kind ? null : kind; }
+function sendChat(index) {
+  sendToServer(JSON.stringify({ t: 'chat', k: index, team: chatWheel === 'team' }));
+  chatWheel = null;
+}
+function hearChat(list) {
+  const now = performance.now();
+  for (const c of list) chatFeed.push({ ...c, at: now });
+  while (chatFeed.length > 5) chatFeed.shift();
+}
+function drawChat() {
+  const now = performance.now();
+  while (chatFeed.length && now - chatFeed[0].at > CHAT_SHOW_MS) chatFeed.shift();
+  ctx.textAlign = 'left';
+  chatFeed.forEach((c, i) => {
+    const y = VH - 170 - (chatFeed.length - 1 - i) * 20;
+    ctx.font = font(12, 700);
+    ctx.fillStyle = c.team ? C.main : C.gold;
+    ctx.fillText((c.team ? '[team] ' : '[near] ') + c.from + ': ' + c.text, 18, y);
+  });
+  if (!chatWheel) return;
+  const w = Math.min(320, VW - 24), rowH = 26, h = 48 + CHAT_PRESETS.length * rowH;
+  const x = VW / 2 - w / 2, y = Math.max(60, VH / 2 - h / 2);
+  panel(x, y, w, h, 14, C.dim, 'rgba(5,14,26,0.94)');
+  ctx.fillStyle = C.main;
+  ctx.font = font(13, 800);
+  ctx.fillText(chatWheel === 'team' ? 'TEAM CALL' : 'NEARBY CALL', x + 18, y + 26);
+  CHAT_PRESETS.forEach((text, i) => {
+    const ry = y + 48 + i * rowH;
+    ctx.fillStyle = C.gold;
+    ctx.font = font(12, 800);
+    ctx.fillText(String(i + 1), x + 18, ry);
+    ctx.fillStyle = C.text;
+    ctx.font = font(12);
+    ctx.fillText(text, x + 42, ry);
+  });
+}
+
 const HELP_KEYS = [
   ['Move', 'W A S D'], ['Look', 'Mouse'], ['Fire', 'Left click or F'], ['Scope (sniper)', 'Right click or Z'],
   ['Jump', 'Space'], ['Crouch', 'Hold C or Ctrl'], ['Reload', 'R'], ['Switch weapon', '1-5 or wheel'],
   ['Shop', 'B, then 1-7'], ['Grenade', 'G'], ['Revive teammate', 'Hold E'], ['Ping', 'Q'],
-  ['Full map', 'Tab or N'], ['Mute', 'M'], ['This screen', 'H'],
+  ['Quick chat', 'V team, X nearby, then 1-8'], ['Full map', 'Tab or N'], ['Mute', 'M'], ['This screen', 'H'],
 ];
 const HELP_TOUCH = [
   ['Move', 'Left stick'], ['Look', 'Drag anywhere'], ['Fire, reload, swap', 'Right buttons'],
@@ -2185,6 +2236,7 @@ function drawOverlay(now) {
   if (bigMap) drawBigMap(now);
   if (shopOpen && curr.me.alive) drawShop(); else shopOpen = false;
   if (helpOpen) drawHelp();
+  drawChat();
 
   ctx.textAlign = 'center';
   if (curr.started && curr.me.downed && !curr.over) {

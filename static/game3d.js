@@ -1135,6 +1135,8 @@ function onState(msg) {
   msg.grenades ??= [];
   if (msg.world) buildWorld(msg.world);
   if (msg.chat?.length) hearChat(msg.chat);
+  updateCaptureMarkers(msg.capture);
+  updateBombMarkers(msg.bomb);
   // Other players' shots: a tracer, and the weapon's sound from where it was fired.
   for (const sh of msg.shots ?? []) {
     if (window.__arena) window.__shotsHeard = (window.__shotsHeard || 0) + 1;
@@ -2264,6 +2266,39 @@ function playVoice(id, d) {
   if (t - audioCtx.currentTime > 0.3) t = audioCtx.currentTime;
   src.start(t);
   voiceNext.set(id, t + buf.duration);
+}
+
+// ---------- Capture and plant-and-defuse markers ----------
+// Rings on the ground: a zone is coloured by its owner, and the planted site turns red.
+const zoneRings = new Map(), siteRings = new Map();
+const OWNER_RING = [0x9aa7b8, 0x4aa8ff, 0xff6b4a];
+function groundRing(inner, outer, x, y) {
+  const mat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.65, side: THREE.DoubleSide, depthWrite: false });
+  const mesh = new THREE.Mesh(new THREE.RingGeometry(inner, outer, 56).rotateX(-Math.PI / 2), mat);
+  mesh.position.set(x, 0.4, y);
+  scene.add(mesh);
+  return mesh;
+}
+function updateCaptureMarkers(c) {
+  for (const z of zoneRings.values()) z.visible = !!c;
+  if (!c) return;
+  for (const z of c.zones) {
+    if (!zoneRings.has(z.name)) zoneRings.set(z.name, groundRing(84, 90, z.x, z.y)); // captureRadius is 90
+    const ring = zoneRings.get(z.name);
+    ring.material.color.setHex(OWNER_RING[z.owner]);
+    ring.visible = true;
+  }
+}
+function updateBombMarkers(b) {
+  for (const r of siteRings.values()) r.visible = !!b;
+  if (!b) return;
+  b.sites.forEach((site, i) => {
+    if (!siteRings.has(site.name)) siteRings.set(site.name, groundRing(54, 60, site.x, site.y)); // bombRadius is 60
+    const ring = siteRings.get(site.name);
+    const hot = b.planted && b.site === i + 1;
+    ring.material.color.setHex(hot ? 0xff3b3b : 0xffc247);
+    ring.visible = !b.defused && !b.exploded || hot;
+  });
 }
 
 // ---------- Capture and plant-and-defuse status ----------

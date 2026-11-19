@@ -274,25 +274,29 @@ type Snapshot struct {
 }
 
 type Match struct {
-	rng       *rand.Rand // the match's own random source: bots and the map use it, so tests can fix it
-	mu        sync.Mutex
-	ID        string
-	players   map[int]*Player
-	loot      map[int]*Loot
-	obstacles []Rect
-	events    []string
-	pings     []Ping
-	nextID    int
-	started   bool
-	over      bool
-	winner    string
-	zoneX     float64
-	zoneY     float64
-	zoneR     float64
-	zoneLeft  float64
-	idleLimit time.Duration
-	idleAt    time.Time // when the match last had zero connected players; zero if it has some
-	closed    bool      // set when the match stops; the server removes closed matches
+	zones         []captureZone // capture mode: zones A, B and C
+	captureFrac   [2]float64    // fractional points per team, so scoring is per second, not per step
+	captureScores [2]int        // points per team
+	captureWinner int           // 1 or 2 once a team reaches the score limit
+	rng           *rand.Rand    // the match's own random source: bots and the map use it, so tests can fix it
+	mu            sync.Mutex
+	ID            string
+	players       map[int]*Player
+	loot          map[int]*Loot
+	obstacles     []Rect
+	events        []string
+	pings         []Ping
+	nextID        int
+	started       bool
+	over          bool
+	winner        string
+	zoneX         float64
+	zoneY         float64
+	zoneR         float64
+	zoneLeft      float64
+	idleLimit     time.Duration
+	idleAt        time.Time // when the match last had zero connected players; zero if it has some
+	closed        bool      // set when the match stops; the server removes closed matches
 	// OnEnd, if set, is called once with every player's result when the match is decided.
 	OnEnd func([]PlayerResult)
 	// FillTo is the room size: when the match starts, bots join until it holds this many players.
@@ -716,6 +720,7 @@ func (m *Match) step(dt float64) {
 	}
 	m.elapsed += dt
 	m.thinkBots(dt)
+	m.stepCapture(dt)
 	if frozen {
 		// Buy phase and the pause between rounds: shopping works, moving and shooting do not.
 		for _, p := range m.players {

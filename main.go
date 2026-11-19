@@ -268,7 +268,7 @@ func (s *Server) createMatch(w http.ResponseWriter, r *http.Request) {
 		size = defaultBotFill
 	}
 	mode := r.FormValue("mode")
-	if mode != "solo" && mode != "duo" && mode != "rounds" {
+	if mode != "solo" && mode != "duo" && mode != "rounds" && mode != "capture" && mode != "bomb" {
 		mode = ""
 	}
 	// The lobby form always sends "size"; with it present, an unticked bots box means no bots.

@@ -43,6 +43,11 @@ type RoundView struct {
 	Team   string  `json:"team"` // the viewer's team name
 }
 
+// roundsMode reports whether the match is played in rounds: plain rounds, or plant and defuse.
+func (m *Match) roundsMode() bool {
+	return m.Mode == "rounds" || m.Mode == "bomb"
+}
+
 // startRounds splits the room into two teams and opens the first round.
 func (m *Match) startRounds() {
 	ids := make([]int, 0, len(m.players))
@@ -90,7 +95,7 @@ type LobbyView struct {
 func (m *Match) SetSide(name string, side int) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.started || m.Mode != "rounds" || side < 0 || side > 2 {
+	if m.started || !m.roundsMode() || side < 0 || side > 2 {
 		return false
 	}
 	for _, p := range m.players {

@@ -581,9 +581,15 @@ func (m *Match) Start() bool {
 	if len(m.players) < 2 {
 		return false
 	}
-	if m.Mode == "rounds" {
+	if m.roundsMode() {
+		if m.Mode == "bomb" {
+			m.bomb = newBomb()
+		}
 		m.startRounds()
 	} else {
+		if m.Mode == "capture" {
+			m.zones = newCaptureZones()
+		}
 		m.assignTeams()
 		m.groupTeams()
 	}

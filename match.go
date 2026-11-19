@@ -278,6 +278,7 @@ type Match struct {
 	captureFrac   [2]float64    // fractional points per team, so scoring is per second, not per step
 	captureScores [2]int        // points per team
 	captureWinner int           // 1 or 2 once a team reaches the score limit
+	bomb          *bombState    // plant and defuse rounds; nil in other rounds
 	rng           *rand.Rand    // the match's own random source: bots and the map use it, so tests can fix it
 	mu            sync.Mutex
 	ID            string
@@ -721,6 +722,7 @@ func (m *Match) step(dt float64) {
 	m.elapsed += dt
 	m.thinkBots(dt)
 	m.stepCapture(dt)
+	m.stepBomb(dt)
 	if frozen {
 		// Buy phase and the pause between rounds: shopping works, moving and shooting do not.
 		for _, p := range m.players {

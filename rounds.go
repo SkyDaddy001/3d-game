@@ -107,6 +107,9 @@ func (m *Match) startRound() {
 	r := m.round
 	r.num++
 	r.phase, r.left = "buy", buyTime
+	if m.bomb != nil {
+		m.bomb = newBomb()
+	}
 	center := worldSize / 2.0
 	m.zoneX, m.zoneY, m.zoneR, m.zoneLeft = center, center, roundZoneR, roundShrinkEvery
 	m.pings = nil
@@ -196,6 +199,12 @@ func (m *Match) checkRound() {
 	}
 	p1, a1, hp1 := m.teamCount(1)
 	p2, a2, hp2 := m.teamCount(2)
+	if m.bomb != nil { // plant and defuse: the bomb decides the round
+		if winner, decided := m.bombWinner(a1, a2); decided {
+			m.endRound(winner, p1, p2)
+		}
+		return
+	}
 	if a1 > 0 && a2 > 0 && r.left > 0 {
 		return
 	}
@@ -216,6 +225,12 @@ func (m *Match) checkRound() {
 			winner = 2
 		}
 	}
+	m.endRound(winner, p1, p2)
+}
+
+// endRound pays out the round and, once a team has won enough, ends the match.
+func (m *Match) endRound(winner, p1, p2 int) {
+	r := m.round
 	if winner == 0 {
 		m.logEvent(fmt.Sprintf("Round %d is a draw", r.num))
 	} else {

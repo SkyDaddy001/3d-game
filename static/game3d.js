@@ -804,6 +804,8 @@ const JUMP_BTN = { x: 0, y: 0, r: 34, hit: 42 };
 const CROUCH_BTN = { x: 0, y: 0, r: 34, hit: 42 };
 const NADE_BTN = { x: 0, y: 0, r: 30, hit: 38 };
 const SCOPE_BTN = { x: 0, y: 0, r: 30, hit: 38 };
+const CHAT_BTN = { x: 0, y: 0, r: 30, hit: 38 };
+const NEAR_BTN = { x: 0, y: 0, r: 30, hit: 38 };
 
 let VW = innerWidth, VH = innerHeight;
 function resize() {
@@ -825,6 +827,8 @@ function resize() {
   CROUCH_BTN.x = innerWidth - 340; CROUCH_BTN.y = innerHeight - 75;
   NADE_BTN.x = innerWidth - 230; NADE_BTN.y = innerHeight - 310;
   SCOPE_BTN.x = innerWidth - 340; SCOPE_BTN.y = innerHeight - 255;
+  CHAT_BTN.x = innerWidth - 460; CHAT_BTN.y = innerHeight - 110;
+  NEAR_BTN.x = innerWidth - 460; NEAR_BTN.y = innerHeight - 165;
 }
 addEventListener('resize', resize);
 resize();
@@ -918,6 +922,12 @@ overlay.addEventListener('pointerdown', e => {
 
   if (e.pointerType === 'touch') {
     if (helpOpen) { closeHelp(); pointers.set(e.pointerId, { role: 'menu' }); return; }
+    if (chatWheel) {
+      const row = chatRows.find(r => inRect(p, r));
+      if (row) sendChat(row.slot); else chatWheel = null;
+      pointers.set(e.pointerId, { role: 'menu' });
+      return;
+    }
     // Open menus take the tap first: a shop row buys, the big map pings, anywhere else closes.
     if (shopOpen) {
       const row = shopRows.find(r => inRect(p, r));
@@ -940,6 +950,8 @@ overlay.addEventListener('pointerdown', e => {
     }
     if (dist(p, JUMP_BTN) <= JUMP_BTN.hit) { tryJump(); pointers.set(e.pointerId, { role: 'menu' }); return; }
     if (dist(p, NADE_BTN) <= NADE_BTN.hit) { pendingThrow = true; pointers.set(e.pointerId, { role: 'menu' }); return; }
+    if (dist(p, CHAT_BTN) <= CHAT_BTN.hit) { toggleChatWheel('team'); pointers.set(e.pointerId, { role: 'menu' }); return; }
+    if (dist(p, NEAR_BTN) <= NEAR_BTN.hit) { toggleChatWheel('near'); pointers.set(e.pointerId, { role: 'menu' }); return; }
     if (dist(p, SCOPE_BTN) <= SCOPE_BTN.hit && curr && curr.ammo.weapon === 'Sniper') { scoped = !scoped; pointers.set(e.pointerId, { role: 'menu' }); return; }
     if (dist(p, CROUCH_BTN) <= CROUCH_BTN.hit) { crouchToggle = !crouchToggle; pointers.set(e.pointerId, { role: 'menu' }); return; }
     if (dist(p, SHOP_BTN) <= SHOP_BTN.hit && curr && curr.me.alive) {
@@ -2084,6 +2096,8 @@ function drawTouchControls() {
   drawButton(CROUCH_BTN, 'CROUCH', C.main, crouchToggle ? 0.9 : 0.5);
   drawButton(NADE_BTN, `NADE ${curr.ammo.grenades}`, C.warn, curr.ammo.grenades ? 0.6 : 0.25);
   if (curr.ammo.weapon === 'Sniper') drawButton(SCOPE_BTN, 'SCOPE', C.main, scoped ? 0.9 : 0.5);
+  drawButton(CHAT_BTN, 'TEAM', C.main, chatWheel === 'team' ? 0.9 : 0.5);
+  drawButton(NEAR_BTN, 'NEAR', C.gold, chatWheel === 'near' ? 0.9 : 0.5);
 }
 
 // The sniper scope: a round window with fine cross lines; everything outside it is dark.
@@ -2249,8 +2263,10 @@ function hearChat(list) {
   for (const c of list) chatFeed.push({ ...c, at: now });
   while (chatFeed.length > 5) chatFeed.shift();
 }
+let chatRows = []; // touch targets for the open wheel: { slot, x, y, w, h }
 function drawChat() {
   const now = performance.now();
+  chatRows = [];
   while (chatFeed.length && now - chatFeed[0].at > CHAT_SHOW_MS) chatFeed.shift();
   ctx.textAlign = 'left';
   chatFeed.forEach((c, i) => {
@@ -2268,6 +2284,7 @@ function drawChat() {
   ctx.fillText(chatWheel === 'team' ? 'TEAM CALL' : 'NEARBY CALL', x + 18, y + 26);
   CHAT_PRESETS.forEach((text, i) => {
     const ry = y + 48 + i * rowH;
+    chatRows.push({ slot: i, x, y: ry - rowH + 6, w, h: rowH });
     ctx.fillStyle = C.gold;
     ctx.font = font(12, 800);
     ctx.fillText(String(i + 1), x + 18, ry);

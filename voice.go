@@ -2,7 +2,11 @@ package main
 
 import (
 	"encoding/binary"
+	"fmt"
 	"math"
+	"net/http"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -86,4 +90,44 @@ func (m *Match) Voice(p *Player, frame []byte) bool {
 		}
 	}
 	return true
+}
+
+// reportVoice files an abuse report about a player whose voice was heard in this match.
+// The server keeps no audio, so the report carries the match, the time and the speaker's usertag only.
+func (s *Server) reportVoice(w http.ResponseWriter, r *http.Request) {
+	if !requirePlayer(w, r) {
+		return
+	}
+	if s.limited(w, r, "voice-report", 10, 10*time.Minute) {
+		return
+	}
+	m := s.get(r.PathValue("id"))
+	me := sessionFrom(r).acc.Name
+	id, err := strconv.Atoi(r.FormValue("speaker"))
+	if m == nil {
+		http.Error(w, "that match is no longer running", http.StatusNotFound)
+		return
+	}
+	target, ok := m.speakerName(id)
+	if err != nil || !ok || strings.EqualFold(target, me) {
+		http.Error(w, "no other player in this match has that voice", http.StatusNotFound)
+		return
+	}
+	note := "voice in match " + m.ID
+	if err := s.reports.add(Report{Reporter: me, Target: target, Reason: "abusive behaviour", Note: note}); err != nil {
+		http.Error(w, "could not save the report, try again", http.StatusInternalServerError)
+		return
+	}
+	fmt.Fprint(w, "Report sent. Thank you.")
+}
+
+// speakerName returns the usertag of a real player in the match, for voice reports.
+func (m *Match) speakerName(id int) (string, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	p, ok := m.players[id]
+	if !ok || p.gone || p.bot != nil {
+		return "", false
+	}
+	return p.Name, true
 }

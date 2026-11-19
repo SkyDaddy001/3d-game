@@ -884,6 +884,8 @@ addEventListener('keydown', e => {
   if (k === 'tab' || k === 'n') { e.preventDefault(); bigMap = !bigMap; shopOpen = false; }
   if (k === 'escape') { shopOpen = false; bigMap = false; helpOpen = false; }
   if (k === 'h' || k === '?') { if (helpOpen) closeHelp(); else helpOpen = true; }
+  if (k === 'k') toggleVoiceDeaf();
+  if (k === 'o') reportLastSpeaker();
   if (k === 't') startTalk(true);
   if (k === 'y') startTalk(false);
   if (k === 'v' || k === 'x') toggleChatWheel(k === 'v' ? 'team' : 'near');
@@ -2141,6 +2143,23 @@ const VOICE_FLAG_TEAM = 1, VOICE_FLAG_MUFFLE = 2;
 let voiceMode = null;       // 0 = team, 1 = nearby, while the key is held
 let micStream = null, micReader = null, voiceEnc = null;
 const voiceDecoders = new Map(), voiceNext = new Map(), voiceFlags = new Map();
+let voiceDeaf = false;     // K: stop hearing other players' voice; sound effects are unaffected
+let lastSpeaker = null;   // { id, at } of the last voice heard, for reporting
+
+function toggleVoiceDeaf() {
+  voiceDeaf = !voiceDeaf;
+  hearChat([{ from: 'Voice', team: false, text: voiceDeaf ? 'muted' : 'unmuted' }]);
+}
+// O reports the last voice heard in the last 30 seconds as abusive. The server keeps no audio.
+async function reportLastSpeaker() {
+  if (!lastSpeaker || performance.now() - lastSpeaker.at > 30000 || !id) {
+    hearChat([{ from: 'Voice', team: false, text: 'no voice to report' }]);
+    return;
+  }
+  const body = new URLSearchParams({ speaker: String(lastSpeaker.id) });
+  const res = await fetch(`/matches/${id}/voice-report`, { method: 'POST', body, credentials: 'same-origin' });
+  hearChat([{ from: 'Voice', team: false, text: res.ok ? 'report sent' : 'report failed' }]);
+}
 
 async function startTalk(team) {
   if (!voiceSupported || !ws || voiceMode !== null || !curr?.started) return;
@@ -2201,13 +2220,14 @@ function onVoice(buf) {
     voiceDecoders.set(id, dec);
   }
   voiceFlags.set(id, u[1]);
+  lastSpeaker = { id, at: performance.now() };
   dec.decode(new EncodedAudioChunk({ type: 'key', timestamp: performance.now() * 1000, data: u.subarray(4) }));
 }
 function playVoice(id, d) {
   const n = d.numberOfFrames, pcm = new Float32Array(n);
   d.copyTo(pcm, { planeIndex: 0 });
   d.close();
-  if (!audioCtx || muted) return;
+  if (!audioCtx || muted || voiceDeaf) return;
   const flags = voiceFlags.get(id) || 0;
   let gain = 1.2, pan = 0;
   if (!(flags & VOICE_FLAG_TEAM)) {
@@ -2298,7 +2318,7 @@ const HELP_KEYS = [
   ['Move', 'W A S D'], ['Look', 'Mouse'], ['Fire', 'Left click or F'], ['Scope (sniper)', 'Right click or Z'],
   ['Jump', 'Space'], ['Crouch', 'Hold C or Ctrl'], ['Reload', 'R'], ['Switch weapon', '1-5 or wheel'],
   ['Shop', 'B, then 1-7'], ['Grenade', 'G'], ['Revive teammate', 'Hold E'], ['Ping', 'Q'],
-  ['Quick chat', 'V team, X nearby, then 1-8'], ['Team talk', 'Hold T'], ['Nearby talk', 'Hold Y'], ['Full map', 'Tab or N'], ['Mute', 'M'], ['This screen', 'H'],
+  ['Quick chat', 'V team, X nearby, then 1-8'], ['Team talk', 'Hold T'], ['Nearby talk', 'Hold Y'], ['Mute voice', 'K'], ['Report voice', 'O'], ['Full map', 'Tab or N'], ['Mute', 'M'], ['This screen', 'H'],
 ];
 const HELP_TOUCH = [
   ['Move', 'Left stick'], ['Look', 'Drag anywhere'], ['Fire, reload, swap', 'Right buttons'],

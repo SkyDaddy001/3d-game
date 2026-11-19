@@ -1203,8 +1203,10 @@ function onState(msg) {
   else if (msg.round) {
     const r = msg.round, secs = Math.ceil(r.left);
     const clock = `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`;
-    hud.textContent = `Round ${r.num} · ${r.team} ${r.mine} : ${r.theirs} · ${r.phase === 'buy' ? 'Buy' : r.phase === 'end' ? 'Next round' : 'Fight'} ${clock}`;
+    hud.textContent = `Round ${r.num} · ${r.team} ${r.mine} : ${r.theirs} · ${r.phase === 'buy' ? 'Buy' : r.phase === 'end' ? 'Next round' : 'Fight'} ${clock}`
+      + (msg.bomb ? ` · ${bombText(msg.bomb)}` : '');
   }
+  else if (msg.capture) hud.textContent = captureText(msg.capture);
   else if (msg.me.alive) hud.textContent = `Alive: ${msg.alive} · HP ${Math.round(msg.me.hp)}`;
   else hud.textContent = `Eliminated · placed #${msg.me.place}`;
 }
@@ -2262,6 +2264,26 @@ function playVoice(id, d) {
   if (t - audioCtx.currentTime > 0.3) t = audioCtx.currentTime;
   src.start(t);
   voiceNext.set(id, t + buf.duration);
+}
+
+// ---------- Capture and plant-and-defuse status ----------
+// Constants match capture.go and bomb.go.
+const CAPTURE_TIME = 4, BOMB_PLANT_TIME = 3;
+const OWNER_NAMES = ['none', 'Alpha', 'Bravo'];
+function captureText(c) {
+  const zones = c.zones.map(z => {
+    const taking = z.team && z.progress > 0 ? ` ${Math.round(100 * z.progress / CAPTURE_TIME)}%` : '';
+    return `${z.name} ${OWNER_NAMES[z.owner]}${taking}`;
+  }).join(' · ');
+  const won = c.winner ? ` · ${OWNER_NAMES[c.winner]} win` : '';
+  return `Capture · Alpha ${c.scores[0]} : ${c.scores[1]} Bravo · ${zones}${won}`;
+}
+function bombText(b) {
+  if (b.exploded) return 'Bomb exploded';
+  if (b.defused) return 'Bomb defused';
+  if (b.planted) return `Bomb at ${b.sites[b.site - 1].name} · ${Math.ceil(b.fuse)}s`;
+  if (b.plantSite) return `Planting ${b.sites[b.plantSite - 1].name} ${Math.round(100 * b.planting / BOMB_PLANT_TIME)}%`;
+  return 'Bomb not planted';
 }
 
 // ---------- Quick chat ----------

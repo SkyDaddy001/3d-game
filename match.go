@@ -266,6 +266,8 @@ type Snapshot struct {
 	Trophies  int          `json:"trophies"` // trophy change this match; set once a ranked match is over
 	Ranked    bool         `json:"ranked"`
 	Round     *RoundView   `json:"round,omitempty"`    // set in rounds mode
+	Capture   *CaptureView `json:"capture,omitempty"`  // set in capture mode
+	Bomb      *BombView    `json:"bomb,omitempty"`     // set in plant-and-defuse rounds
 	Grenades  []*Grenade   `json:"grenades,omitempty"` // grenades in the air near the player
 	World     *WorldView   `json:"world,omitempty"`    // lakes and bushes; sent once
 	Lobby     *LobbyView   `json:"lobby,omitempty"`    // set while waiting for the match to start
@@ -1312,6 +1314,8 @@ func (m *Match) broadcast() {
 		if m.round != nil {
 			snap.Round = m.roundView(me)
 		}
+		snap.Capture = m.captureView()
+		snap.Bomb = m.bombView()
 		for _, g := range m.grenades {
 			if near(me, g.X, g.Y) {
 				snap.Grenades = append(snap.Grenades, g)

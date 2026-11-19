@@ -125,3 +125,37 @@ func (m *Match) bombWinner(a1, a2 int) (int, bool) {
 	}
 	return 0, false
 }
+
+// BombSiteView is one bomb site as the client draws it.
+type BombSiteView struct {
+	Name string  `json:"name"`
+	X    float64 `json:"x"`
+	Y    float64 `json:"y"`
+}
+
+// BombView is the bomb state every player sees.
+type BombView struct {
+	Sites     [2]BombSiteView `json:"sites"`
+	PlantSite int             `json:"plantSite"` // site being planted, 0 for none
+	Planting  float64         `json:"planting"`  // seconds of the plant so far
+	Planted   bool            `json:"planted"`
+	Site      int             `json:"site"` // planted site, 0 before a plant
+	Fuse      float64         `json:"fuse"` // seconds left on the fuse
+	Defusing  float64         `json:"defusing"`
+	Defused   bool            `json:"defused"`
+	Exploded  bool            `json:"exploded"`
+}
+
+// bombView builds the bomb state for the snapshot, or nil outside plant-and-defuse rounds.
+func (m *Match) bombView() *BombView {
+	b := m.bomb
+	if b == nil {
+		return nil
+	}
+	v := &BombView{PlantSite: b.plantSite, Planting: b.planting, Planted: b.planted, Site: b.site,
+		Fuse: b.fuse, Defusing: b.defusing, Defused: b.defused, Exploded: b.exploded}
+	for i, s := range b.sites {
+		v.Sites[i] = BombSiteView{Name: s.Name, X: s.X, Y: s.Y}
+	}
+	return v
+}

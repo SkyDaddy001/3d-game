@@ -116,3 +116,18 @@ func (m *Match) captureScore(dt float64) {
 		}
 	}
 }
+
+// CaptureView is the capture state every player sees: the zones and each team's points.
+type CaptureView struct {
+	Zones  []captureZone `json:"zones"`
+	Scores [2]int        `json:"scores"`
+	Winner int           `json:"winner"` // 1 or 2 once the match is decided, 0 before
+}
+
+// captureView builds the capture state for the snapshot, or nil outside capture mode.
+func (m *Match) captureView() *CaptureView {
+	if m.Mode != "capture" || m.zones == nil {
+		return nil
+	}
+	return &CaptureView{Zones: m.zones, Scores: m.captureScores, Winner: m.captureWinner}
+}

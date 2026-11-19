@@ -223,6 +223,9 @@ func (m *Match) botGoal(p *Player) (x, y float64, ok bool) {
 			return x, y, true
 		}
 	}
+	if gx, gy, ok := m.objectiveGoal(p); ok {
+		return gx, gy, true
+	}
 	// Still saving up for a rifle: collect coins, staying inside the zone.
 	if !p.owned[2] {
 		bestD := botCashSeek
@@ -297,4 +300,44 @@ func (m *Match) random() *rand.Rand {
 		m.rng = rand.New(rand.NewSource(1))
 	}
 	return m.rng
+}
+
+// objectiveGoal sends a bot to where its team needs it in an objective mode: a capture zone its
+// team does not hold, or a bomb site in plant and defuse. Bots spread across the sites by ID.
+func (m *Match) objectiveGoal(p *Player) (x, y float64, ok bool) {
+	if p.Team == 0 {
+		return 0, 0, false
+	}
+	if m.Mode == "capture" && m.zones != nil {
+		best, bestD := -1, math.Inf(1)
+		for i, z := range m.zones {
+			if z.Owner == p.Team {
+				continue // already ours: leave it to the others
+			}
+			if d := math.Hypot(z.X-p.X, z.Y-p.Y); d < bestD {
+				best, bestD = i, d
+			}
+		}
+		if best < 0 { // every zone is ours: go to the one nearest the middle
+			for i, z := range m.zones {
+				if d := math.Hypot(z.X-worldSize/2, z.Y-worldSize/2); best < 0 || d < bestD {
+					best, bestD = i, d
+				}
+			}
+		}
+		return m.zones[best].X, m.zones[best].Y, true
+	}
+	if m.bomb != nil && m.roundsMode() {
+		b := m.bomb
+		site := int(p.ID % 2) // 0 for site A, 1 for site B
+		if p.Team == bombDefenders {
+			site = int((p.ID + 1) % 2)
+			if b.planted && !b.defused {
+				site = b.site - 1 // defend the bomb
+			}
+		}
+		s := b.sites[site]
+		return s.X, s.Y, true
+	}
+	return 0, 0, false
 }

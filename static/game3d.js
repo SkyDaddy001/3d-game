@@ -2290,8 +2290,20 @@ function updateCaptureMarkers(c) {
     ring.visible = true;
   }
 }
+const siteTags = new Map(); // site name -> { sprite, text }
+// siteTagText is the label over a site: planting progress, the fuse, or defuse progress.
+function siteTagText(b, i) {
+  const site = b.sites[i];
+  if (b.planted && b.site === i + 1) {
+    if (b.defusing > 0) return `${site.name} DEFUSING ${Math.round(100 * b.defusing / BOMB_DEFUSE_TIME)}% · ${Math.ceil(b.fuse)}s`;
+    return `${site.name} BOMB ${Math.ceil(b.fuse)}s`;
+  }
+  if (b.plantSite === i + 1) return `${site.name} PLANTING ${Math.round(100 * b.planting / BOMB_PLANT_TIME)}%`;
+  return site.name;
+}
 function updateBombMarkers(b) {
   for (const r of siteRings.values()) r.visible = !!b;
+  for (const t of siteTags.values()) t.sprite.visible = !!b;
   if (!b) return;
   b.sites.forEach((site, i) => {
     if (!siteRings.has(site.name)) siteRings.set(site.name, groundRing(54, 60, site.x, site.y)); // bombRadius is 60
@@ -2299,6 +2311,19 @@ function updateBombMarkers(b) {
     const hot = b.planted && b.site === i + 1;
     ring.material.color.setHex(hot ? 0xff3b3b : 0xffc247);
     ring.visible = !b.defused && !b.exploded || hot;
+
+    // Redraw the label only when its text changes.
+    const text = siteTagText(b, i);
+    let tag = siteTags.get(site.name);
+    if (!tag || tag.text !== text) {
+      if (tag) { scene.remove(tag.sprite); tag.sprite.material.map.dispose(); tag.sprite.material.dispose(); }
+      const sprite = nameTag(text, hot ? '#ff6b6b' : '#ffd36b');
+      sprite.position.set(site.x, 90, site.y);
+      scene.add(sprite);
+      tag = { sprite, text };
+      siteTags.set(site.name, tag);
+    }
+    tag.sprite.visible = !b.defused && !b.exploded || hot;
   });
 }
 

@@ -2303,7 +2303,7 @@ function updateBombMarkers(b) {
 
 // ---------- Capture and plant-and-defuse status ----------
 // Constants match capture.go and bomb.go.
-const CAPTURE_TIME = 4, BOMB_PLANT_TIME = 3;
+const CAPTURE_TIME = 4, BOMB_PLANT_TIME = 1.5, BOMB_DEFUSE_TIME = 5;
 const OWNER_NAMES = ['none', 'Alpha', 'Bravo'];
 function captureText(c) {
   const zones = c.zones.map(z => {
@@ -2316,6 +2316,7 @@ function captureText(c) {
 function bombText(b) {
   if (b.exploded) return 'Bomb exploded';
   if (b.defused) return 'Bomb defused';
+  if (b.planted && b.defusing > 0) return `Defusing ${Math.round(100 * b.defusing / BOMB_DEFUSE_TIME)}% · ${Math.ceil(b.fuse)}s`;
   if (b.planted) return `Bomb at ${b.sites[b.site - 1].name} · ${Math.ceil(b.fuse)}s`;
   if (b.plantSite) return `Planting ${b.sites[b.plantSite - 1].name} ${Math.round(100 * b.planting / BOMB_PLANT_TIME)}%`;
   return 'Bomb not planted';

@@ -206,6 +206,12 @@ Choose **Rounds** as the team setting of a custom room for a team-versus-team ma
   who picked a full side is moved to the other team. Players who pick nothing fill the smaller team.
 - **Play rounds:** the Play menu has a Rounds option that joins a rounds room for quick play.
 
+## Capture and plant-and-defuse modes
+
+Capture: three zones, A, B and C. Stand in a zone alone for 4 seconds to take it; the team holding most zones gains points, and the first team to 200 wins. Quick play and custom rooms offer it in the mode list.
+
+Plant-and-defuse: attackers (Alpha) plant at site A or B by standing alone there for 1.5 seconds. The bomb then has a 40-second fuse. Defenders (Bravo) defuse by standing alone at the planted site for 5 seconds. If the fuse runs out the bomb explodes and attackers win the round. Bots split across both sites, and defenders push toward their site during fights.
+
 ## Replays of bot matches
 
 - **Watch a bot match** in the lobby makes the server play a complete match between bots at full

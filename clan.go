@@ -264,3 +264,46 @@ func (s *Store) ClanTagByName(name string) string {
 	}
 	return s.accounts[h].ClanTag
 }
+
+// HandOverClan makes another member of the leader's clan the new leader. The old leader stays in.
+func (s *Store) HandOverClan(token, usertag string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	a, ok := s.accounts[s.keyLocked(token)]
+	if !ok {
+		return ErrUnknown
+	}
+	if a.Clan == "" {
+		return ErrNoClan
+	}
+	if !a.ClanLeader {
+		return ErrNotLeader
+	}
+	otherHash, ok := s.names[strings.ToLower(strings.TrimSpace(usertag))]
+	if !ok {
+		return ErrNoUser
+	}
+	other := s.accounts[otherHash]
+	if other == a {
+		return ErrSelf
+	}
+	if other.Clan != a.Clan {
+		return ErrNoUser
+	}
+	a.ClanLeader = false
+	other.ClanLeader = true
+	return s.saveLocked()
+}
+
+// clanHandOver handles the handover form for leaders.
+func (s *Server) clanHandOver(w http.ResponseWriter, r *http.Request) {
+	if s.limited(w, r, "clan", 20, time.Minute) {
+		return
+	}
+	if err := s.store.HandOverClan(sessionFrom(r).token, r.FormValue("usertag")); err != nil {
+		httpError(w, err)
+		return
+	}
+	w.Header().Set("HX-Redirect", "/")
+	w.WriteHeader(http.StatusOK)
+}

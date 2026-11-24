@@ -118,3 +118,30 @@ func TestClanTagReachesMatchPlayers(t *testing.T) {
 		t.Fatalf("player without clan has tag %q", q.view().Clan)
 	}
 }
+
+func TestClanHandOver(t *testing.T) {
+	s, _ := OpenStore("")
+	lead := newVerifiedAccount(t, s, "old_boss", "oldboss@example.test")
+	mate := newVerifiedAccount(t, s, "new_boss", "newboss@example.test")
+	out := newVerifiedAccount(t, s, "outsider", "out@example.test")
+	s.CreateClan(lead, "Owls", "OWL")
+	s.InviteToClan(lead, "new_boss")
+	s.AcceptClanInvite(mate)
+
+	if err := s.HandOverClan(lead, "outsider"); !errors.Is(err, ErrNoUser) {
+		t.Fatalf("hand over to non-member: %v, want ErrNoUser", err)
+	}
+	if err := s.HandOverClan(mate, "old_boss"); !errors.Is(err, ErrNotLeader) {
+		t.Fatalf("member hands over: %v, want ErrNotLeader", err)
+	}
+	if err := s.HandOverClan(lead, "new_boss"); err != nil {
+		t.Fatalf("hand over: %v", err)
+	}
+	if c, _ := s.ClanOf(mate); !c.Leading || c.Leader != "new_boss" {
+		t.Fatalf("new leader not set: %+v", c)
+	}
+	if c, _ := s.ClanOf(lead); c.Leading || len(c.Members) != 2 {
+		t.Fatalf("old leader should stay as a member: %+v", c)
+	}
+	_ = out
+}

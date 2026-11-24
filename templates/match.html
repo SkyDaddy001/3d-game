@@ -21,6 +21,11 @@
            background: #6ff3ff; text-decoration: none; cursor: pointer; text-shadow: none; box-shadow: 0 0 12px rgba(111,243,255,0.6); }
     [hidden] { display: none !important; }
     body.capture #hud button, body.capture #hud a { display: none; }
+    #objectives { position: fixed; top: 64px; left: 50%; transform: translateX(-50%); z-index: 10; min-width: 260px;
+           font: 700 12px ui-monospace, "SF Mono", Menlo, Consolas, monospace; letter-spacing: 1px; color: #eaffff;
+           background: rgba(6,16,30,0.6); padding: 8px 14px; border: 1px solid rgba(111,243,255,0.3); pointer-events: none; }
+    #objectives .row { display: flex; justify-content: space-between; gap: 18px; padding: 2px 0; }
+    #objectives .score { font-size: 15px; color: #6ff3ff; }
   </style>
 </head>
 <body>
@@ -43,6 +48,7 @@
     <button id="help" title="Controls">?</button>
     <a id="back" href="/" hidden>Lobby</a>
   </div>
+  <div id="objectives" hidden></div>
   <script>window.MATCH = { id: {{.ID}}, name: {{.Name}}, replay: {{.Replay}} };</script>
   <script type="module" src="/static/game3d.js"></script>
 </body>

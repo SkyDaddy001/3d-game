@@ -1211,6 +1211,7 @@ function onState(msg) {
   else if (msg.capture) hud.textContent = captureText(msg.capture);
   else if (msg.me.alive) hud.textContent = `Alive: ${msg.alive} · HP ${Math.round(msg.me.hp)}`;
   else hud.textContent = `Eliminated · placed #${msg.me.place}`;
+  renderObjectives(msg.capture);
 }
 // ?lag=150 delays everything sent and received by that many milliseconds, to try the game as it
 // would feel on a slow connection.
@@ -2305,6 +2306,29 @@ function updateBombMarkers(b) {
 // Constants match capture.go and bomb.go.
 const CAPTURE_TIME = 4, BOMB_PLANT_TIME = 1.5, BOMB_DEFUSE_TIME = 5;
 const OWNER_NAMES = ['none', 'Alpha', 'Bravo'];
+// renderObjectives shows the capture score and each zone's owner and progress, or hides the panel.
+function renderObjectives(c) {
+  const panel = document.getElementById('objectives');
+  if (!panel) return;
+  panel.hidden = !c;
+  if (!c) return;
+  const row = (left, right, cls) => {
+    const el = document.createElement('div');
+    el.className = cls ? `row ${cls}` : 'row';
+    const a = document.createElement('span'), b = document.createElement('span');
+    a.textContent = left;
+    b.textContent = right;
+    el.append(a, b);
+    return el;
+  };
+  const rows = [row(`Alpha ${c.scores[0]}`, `${c.scores[1]} Bravo`, 'score')];
+  for (const z of c.zones) {
+    const taking = z.team && z.progress > 0 ? `${Math.round(100 * z.progress / CAPTURE_TIME)}%` : '';
+    rows.push(row(z.name, `${OWNER_NAMES[z.owner]}${taking ? ' · ' + taking : ''}`));
+  }
+  if (c.winner) rows.push(row('', `${OWNER_NAMES[c.winner]} win`));
+  panel.replaceChildren(...rows);
+}
 function captureText(c) {
   const zones = c.zones.map(z => {
     const taking = z.team && z.progress > 0 ? ` ${Math.round(100 * z.progress / CAPTURE_TIME)}%` : '';

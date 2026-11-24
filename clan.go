@@ -30,11 +30,15 @@ var (
 
 // ClanView is what a player sees of their own clan.
 type ClanView struct {
-	Name    string
-	Tag     string
-	Leader  string
-	Members []string
-	Leading bool
+	Name     string
+	Tag      string
+	Leader   string
+	Members  []string
+	Leading  bool
+	Matches  int // total matches played by all members
+	Wins     int
+	Kills    int
+	Trophies int
 }
 
 // ClanOf returns the clan the account behind token is in.
@@ -51,6 +55,10 @@ func (s *Store) ClanOf(token string) (ClanView, bool) {
 			continue
 		}
 		v.Members = append(v.Members, m.Name)
+		v.Matches += m.Matches
+		v.Wins += m.Wins
+		v.Kills += m.Kills
+		v.Trophies += m.Trophies
 		if m.ClanLeader {
 			v.Leader = m.Name
 		}
@@ -241,6 +249,7 @@ func (s *Server) clanPanel(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(&b, `<li>%s%s</li>`, html.EscapeString(m), tag)
 	}
 	b.WriteString("</ul>")
+	fmt.Fprintf(&b, `<p class="small">%d wins in %d matches · %d kills · %d trophies</p>`, c.Wins, c.Matches, c.Kills, c.Trophies)
 	if c.Leading {
 		b.WriteString(`<p class="small">Invite a player by usertag from the form below. Leaving as leader disbands the clan.</p>`)
 	}

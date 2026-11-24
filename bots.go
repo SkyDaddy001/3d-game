@@ -153,6 +153,11 @@ func (m *Match) thinkBots(dt float64) {
 			case best < 110:
 				mx, my = mx-math.Cos(aim), my-math.Sin(aim)
 			}
+			// In capture and plant-and-defuse, bots throw a grenade at enemies at mid range.
+			if (m.bomb != nil || m.Mode == "capture") && p.grenades > 0 && p.throwCool <= 0 &&
+				best > 250 && best < 450 && m.random().Float64() < 0.02 {
+				p.wantThrow = true
+			}
 			// Defenders already at their site hold it instead of strafing out to chase.
 			if m.bomb != nil && m.roundsMode() && p.Team == bombDefenders {
 				if site := m.bomb.sites[(m.teamRank(p)+1)%2]; math.Hypot(site.X-p.X, site.Y-p.Y) < 200 {
@@ -292,6 +297,9 @@ func botPurchase(p *Player) int {
 	}
 	if p.owned[2] && p.armor < armorMax/2 && p.credits >= armorPrice {
 		return armorSlot
+	}
+	if p.grenades < 2 && p.credits >= grenadePrice {
+		return grenadeSlot
 	}
 	for w := range weapons {
 		if p.owned[w] && p.mags[w] == 0 && p.reserves[w] == 0 && p.credits >= ammoPrice {

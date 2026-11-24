@@ -157,6 +157,10 @@
         <input name="usertag" minlength="3" maxlength="16" placeholder="Invite by usertag" aria-label="Invite to clan by usertag">
         <button type="submit">Invite</button>
       </form>
+      <form class="row" hx-post="/clan/handover" hx-swap="none">
+        <input name="usertag" minlength="3" maxlength="16" placeholder="Member to make leader" aria-label="Member to make leader by usertag">
+        <button type="submit">Make leader</button>
+      </form>
       <div class="row">
         <button type="button" hx-post="/clan/accept" hx-swap="none">Accept invite</button>
         <button type="button" class="ghost" hx-post="/clan/leave" hx-swap="none" hx-confirm="Leave your clan? A leader leaving disbands it.">Leave clan</button>

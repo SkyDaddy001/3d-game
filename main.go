@@ -516,6 +516,7 @@ func newMux(s *Server) (http.Handler, error) {
 	mux.HandleFunc("POST /clan/invite", s.clanInvite)
 	mux.HandleFunc("POST /clan/accept", s.clanAccept)
 	mux.HandleFunc("POST /clan/leave", s.clanLeave)
+	mux.HandleFunc("POST /clan/handover", s.clanHandOver)
 	mux.HandleFunc("GET /invites", s.invitesList)
 	mux.HandleFunc("POST /invites", s.sendInvite)
 	mux.HandleFunc("POST /matches/quick", s.quickMatch)

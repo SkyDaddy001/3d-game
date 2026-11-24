@@ -9,7 +9,7 @@ import "math"
 // on a defuse, when the attackers are wiped before a plant, or when time runs out with no plant.
 
 const (
-	bombPlantTime  = 3.0
+	bombPlantTime  = 1.5
 	bombDefuseTime = 5.0
 	bombFuseTime   = 40.0
 	bombRadius     = 60.0

@@ -153,6 +153,31 @@ func (m *Match) thinkBots(dt float64) {
 			case best < 110:
 				mx, my = mx-math.Cos(aim), my-math.Sin(aim)
 			}
+			// Defenders already at their site hold it instead of strafing out to chase.
+			if m.bomb != nil && m.roundsMode() && p.Team == bombDefenders {
+				if site := m.bomb.sites[(m.teamRank(p)+1)%2]; math.Hypot(site.X-p.X, site.Y-p.Y) < 200 {
+					mx, my = 0, 0
+				}
+			}
+			// Planters standing on their site hold it: strafing out would reset the plant.
+			if m.bomb != nil && m.roundsMode() && p.Team == bombAttackers {
+				if site := m.bomb.sites[m.teamRank(p)%2]; math.Hypot(site.X-p.X, site.Y-p.Y) < bombRadius {
+					mx, my = 0, 0
+				}
+			}
+			// In an objective mode, keep moving toward the objective while fighting, so a bot
+			// that spots an enemy still gets to its zone or site.
+			if gx, gy, ok := m.objectiveGoal(p); ok && (m.bomb != nil || m.Mode == "capture") {
+				if dist := math.Hypot(gx-p.X, gy-p.Y); dist > 8 {
+					// Defenders push harder toward their site than planters do.
+					pull := 0.8
+					if p.Team == bombDefenders {
+						pull = 1.6
+					}
+					mx += (gx - p.X) / dist * pull
+					my += (gy - p.Y) / dist * pull
+				}
+			}
 		} else {
 			b.seen = 0
 			b.trigger = 0
@@ -329,9 +354,12 @@ func (m *Match) objectiveGoal(p *Player) (x, y float64, ok bool) {
 	}
 	if m.bomb != nil && m.roundsMode() {
 		b := m.bomb
-		site := int(p.ID % 2) // 0 for site A, 1 for site B
+		// Split each team across the sites by rank within the team, not by ID parity: bots
+		// added in turn share one parity per team, which sent every bot to the same site.
+		rank := m.teamRank(p)
+		site := rank % 2 // 0 for site A, 1 for site B
 		if p.Team == bombDefenders {
-			site = int((p.ID + 1) % 2)
+			site = (rank + 1) % 2
 			if b.planted && !b.defused {
 				site = b.site - 1 // defend the bomb
 			}
@@ -340,4 +368,15 @@ func (m *Match) objectiveGoal(p *Player) (x, y float64, ok bool) {
 		return s.X, s.Y, true
 	}
 	return 0, 0, false
+}
+
+// teamRank is the position of p among its team's players, ordered by ID.
+func (m *Match) teamRank(p *Player) int {
+	rank := 0
+	for _, q := range m.players {
+		if q.Team == p.Team && q.ID < p.ID {
+			rank++
+		}
+	}
+	return rank
 }

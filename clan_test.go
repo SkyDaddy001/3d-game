@@ -145,3 +145,20 @@ func TestClanHandOver(t *testing.T) {
 	}
 	_ = out
 }
+
+func TestClanStatsAddUp(t *testing.T) {
+	s, _ := OpenStore("")
+	a := newVerifiedAccount(t, s, "stat_one", "s1@example.test")
+	b := newVerifiedAccount(t, s, "stat_two", "s2@example.test")
+	s.CreateClan(a, "Stats", "STA")
+	s.InviteToClan(a, "stat_two")
+	s.AcceptClanInvite(b)
+	s.mu.Lock()
+	s.accounts[s.keyLocked(a)].Matches, s.accounts[s.keyLocked(a)].Wins, s.accounts[s.keyLocked(a)].Kills, s.accounts[s.keyLocked(a)].Trophies = 4, 1, 7, 10
+	s.accounts[s.keyLocked(b)].Matches, s.accounts[s.keyLocked(b)].Wins, s.accounts[s.keyLocked(b)].Kills, s.accounts[s.keyLocked(b)].Trophies = 6, 3, 9, 5
+	s.mu.Unlock()
+	c, ok := s.ClanOf(b)
+	if !ok || c.Matches != 10 || c.Wins != 4 || c.Kills != 16 || c.Trophies != 15 {
+		t.Fatalf("clan stats: %+v", c)
+	}
+}

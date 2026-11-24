@@ -97,3 +97,24 @@ func TestClanNameAndTagRules(t *testing.T) {
 		t.Fatalf("long tag: %v, want ErrClanTag", err)
 	}
 }
+
+func TestClanTagReachesMatchPlayers(t *testing.T) {
+	s, _ := OpenStore("")
+	token := newVerifiedAccount(t, s, "tag_holder", "tag@example.test")
+	if err := s.CreateClan(token, "Foxes", "FOX"); err != nil {
+		t.Fatal(err)
+	}
+	m := NewMatch("tagtest")
+	m.clanTag = s.ClanTagByName
+	p, ok := m.Join("tag_holder")
+	if !ok {
+		t.Fatal("join failed")
+	}
+	if v := p.view(); v.Clan != "FOX" {
+		t.Fatalf("view clan %q, want FOX", v.Clan)
+	}
+	q, _ := m.Join("nobody_here")
+	if q != nil && q.view().Clan != "" {
+		t.Fatalf("player without clan has tag %q", q.view().Clan)
+	}
+}

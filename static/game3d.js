@@ -574,7 +574,7 @@ function makePlayerMesh(p) {
   if (look) addHat(head, look[3], mesh);
 
   root.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
-  const tag = nameTag(p.name, '#ffffff');
+  const tag = nameTag(p.clan ? `[${p.clan}] ${p.name}` : p.name, '#ffffff');
   root.add(tag);
   // A green pointer that floats over teammates and shows through walls.
   const marker = new THREE.Mesh(mateMarkerGeo, matMateMarker);
@@ -583,7 +583,7 @@ function makePlayerMesh(p) {
   marker.visible = false;
   root.add(marker);
   root.userData = {
-    body, head, torso, armL, armR, legL, legR, eyes, shirt, tag, marker, name: p.name,
+    body, head, torso, armL, armR, legL, legR, eyes, shirt, tag, marker, name: p.name, clan: p.clan,
     enemyColor: shirt.color.getHex(), mate: false, phase: h * 10, down: 0,
     blinkAt: performance.now() + 1500 + h * 3000, facing: null,
   };
@@ -637,7 +637,7 @@ function animateAvatar(root, p, speed, dt, now, mate) {
     root.remove(u.tag);
     u.tag.material.map.dispose();
     u.tag.material.dispose();
-    u.tag = nameTag(u.name, mate ? '#8dffa8' : '#ffffff');
+    u.tag = nameTag(u.clan ? `[${u.clan}] ${u.name}` : u.name, mate ? '#8dffa8' : '#ffffff');
     root.add(u.tag);
     u.marker.visible = mate;
   }

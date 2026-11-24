@@ -454,6 +454,7 @@ func (s *Server) newMatch(id string) *Match {
 	m := NewMatch(id)
 	m.mu.Lock()
 	m.FillTo = s.botFill
+	m.clanTag = s.store.ClanTagByName
 	m.Ranked = true // createMatch turns this off for private rooms
 	m.OnEnd = func(results []PlayerResult) {
 		ranked := m.IsRanked()

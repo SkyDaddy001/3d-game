@@ -89,6 +89,7 @@ var weapons = []Weapon{
 type Player struct {
 	ID          int
 	Name        string
+	clan        string // clan tag shown above the player, fixed when they join
 	Team        int
 	X, Y, Aim   float64
 	HP          float64
@@ -215,6 +216,7 @@ type AmmoView struct {
 }
 
 type PlayerView struct {
+	Clan   string  `json:"clan,omitempty"`
 	Weapon string  `json:"weapon"`
 	ID     int     `json:"id"`
 	Name   string  `json:"name"`
@@ -302,6 +304,8 @@ type Match struct {
 	closed        bool      // set when the match stops; the server removes closed matches
 	// OnEnd, if set, is called once with every player's result when the match is decided.
 	OnEnd func([]PlayerResult)
+	// clanTag returns the clan tag for a usertag, or empty. Set by the server.
+	clanTag func(name string) string
 	// FillTo is the room size: when the match starts, bots join until it holds this many players.
 	FillTo int
 	// Room settings, chosen by whoever created the room.
@@ -474,6 +478,9 @@ func (m *Match) Join(name string) (*Player, bool) {
 		X: x, Y: y,
 		send:  make(chan []byte, 16),
 		voice: make(chan []byte, voiceQueueDepth),
+	}
+	if m.clanTag != nil {
+		p.clan = m.clanTag(name)
 	}
 	m.players[id] = p
 	return p, true
@@ -1261,7 +1268,7 @@ func (m *Match) tryPickup(p *Player) {
 func (p *Player) view() PlayerView {
 	return PlayerView{
 		Weapon: weapons[p.weapon].Name,
-		ID:     p.ID, Name: p.Name, Team: p.Team, X: p.X, Y: p.Y,
+		ID:     p.ID, Name: p.Name, Clan: p.clan, Team: p.Team, X: p.X, Y: p.Y,
 		HP: p.HP, Alive: p.Alive, Place: p.Place, Bloom: p.bloom,
 		Downed: p.downed, Bleed: p.bleed, Aim: p.Aim, Kills: p.kills, Look: p.look, Crouch: p.crouch && !p.downed, Swim: p.swim, Z: math.Round(p.Z*10) / 10,
 	}

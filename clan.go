@@ -253,3 +253,14 @@ func plural(n int) string {
 	}
 	return "s"
 }
+
+// ClanTagByName returns the clan tag of the player with this usertag, or empty.
+func (s *Store) ClanTagByName(name string) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	h, ok := s.names[strings.ToLower(strings.TrimSpace(name))]
+	if !ok {
+		return ""
+	}
+	return s.accounts[h].ClanTag
+}

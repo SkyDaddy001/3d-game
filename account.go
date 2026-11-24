@@ -73,11 +73,12 @@ func ready(r *http.Request) bool {
 func httpError(w http.ResponseWriter, err error) {
 	status := http.StatusUnprocessableEntity
 	switch {
-	case errors.Is(err, ErrNameTaken), errors.Is(err, ErrEmailTaken), errors.Is(err, ErrAlreadyFriend), errors.Is(err, ErrHasAccount):
+	case errors.Is(err, ErrNameTaken), errors.Is(err, ErrEmailTaken), errors.Is(err, ErrAlreadyFriend), errors.Is(err, ErrHasAccount),
+		errors.Is(err, ErrClanTaken), errors.Is(err, ErrInClan):
 		status = http.StatusConflict
 	case errors.Is(err, ErrCooldown), errors.Is(err, ErrOTPTries):
 		status = http.StatusTooManyRequests
-	case errors.Is(err, ErrNotVerified), errors.Is(err, ErrNoName), errors.Is(err, ErrKeepAccount):
+	case errors.Is(err, ErrNotVerified), errors.Is(err, ErrNoName), errors.Is(err, ErrKeepAccount), errors.Is(err, ErrNotLeader):
 		status = http.StatusForbidden
 	case errors.Is(err, ErrNoUser):
 		status = http.StatusNotFound

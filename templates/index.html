@@ -146,6 +146,23 @@
       <div class="status" id="invite-status"></div>
     </section>
     <section class="card">
+      <h2>Clan</h2>
+      <div hx-get="/clan" hx-trigger="load, every 10s" hx-swap="innerHTML"></div>
+      <form class="row" hx-post="/clan" hx-swap="none">
+        <input name="name" minlength="3" maxlength="16" placeholder="Clan name" aria-label="Clan name" required>
+        <input name="tag" minlength="2" maxlength="4" placeholder="Tag" aria-label="Clan tag" required>
+        <button type="submit">Create</button>
+      </form>
+      <form class="row" hx-post="/clan/invite" hx-swap="none">
+        <input name="usertag" minlength="3" maxlength="16" placeholder="Invite by usertag" aria-label="Invite to clan by usertag">
+        <button type="submit">Invite</button>
+      </form>
+      <div class="row">
+        <button type="button" hx-post="/clan/accept" hx-swap="none">Accept invite</button>
+        <button type="button" class="ghost" hx-post="/clan/leave" hx-swap="none" hx-confirm="Leave your clan? A leader leaving disbands it.">Leave clan</button>
+      </div>
+    </section>
+    <section class="card">
       <h2>Friends</h2>
       <div hx-get="/friends" hx-trigger="load" hx-swap="innerHTML"></div>
       <form class="row" hx-post="/friends" hx-swap="none">

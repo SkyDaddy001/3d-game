@@ -53,7 +53,11 @@ type Account struct {
 	Look         Look     `json:"look"`
 	Devices      []string `json:"devices,omitempty"` // token hashes of other devices signed in to this account
 	Blocked      []string `json:"blocked,omitempty"` // usertags this player has blocked
-	LoginTarget  string   `json:"-"`                 // on a new device: the account a sign-in code was sent for
+	Clan         string   `json:"clan,omitempty"`    // clan name, empty when in no clan
+	ClanTag      string   `json:"clan_tag,omitempty"`
+	ClanLeader   bool     `json:"clan_leader,omitempty"`
+	ClanInvite   string   `json:"clan_invite,omitempty"` // clan that has invited this player
+	LoginTarget  string   `json:"-"`                     // on a new device: the account a sign-in code was sent for
 }
 
 // Store holds all accounts. Methods return copies, so callers never share state with it.
